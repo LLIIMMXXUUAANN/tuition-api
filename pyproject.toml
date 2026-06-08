@@ -1,0 +1,36 @@
+[project]
+name = "tuition-api"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "pydantic-settings>=2.6",
+    # Supabase
+    "supabase>=2.10",
+    # Google
+    "google-auth>=2.36",
+    "google-auth-oauthlib>=1.2",
+    "google-api-python-client>=2.155",
+    # AI
+    "google-genai>=1.0",
+    "langchain-core>=0.3",
+    "langchain-google-genai>=2.0",
+    "langgraph>=0.2",
+    # SSE
+    "sse-starlette>=2.1",
+    # Image
+    "Pillow>=11.0",
+    # Utils
+    "pytz>=2024.1",
+]
+
+[tool.uv]
+dev-dependencies = ["ruff", "pyright"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I"]

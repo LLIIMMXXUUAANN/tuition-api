@@ -1,0 +1,190 @@
+import asyncio
+
+from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
+
+from app.auth import require_internal_secret
+from app.services.google.auth import get_oauth2_credentials
+from app.services.google.calendar import (
+    create_weekly_class_events,
+    find_recurring_event_ids,
+    update_weekly_class_events,
+)
+from app.services.google.cleanup import delete_student_google
+from app.services.google.drive import (
+    create_student_drive_folder,
+    update_student_meet_doc,
+)
+from app.services.google.sync import sync_all_students
+from app.services.supabase_client import get_supabase
+from app.types import ClassSlot
+
+router = APIRouter(dependencies=[Depends(require_internal_secret)])
+
+
+# ---------------------------------------------------------------------------
+# Request models
+# ---------------------------------------------------------------------------
+
+
+class CreateClassEventRequest(BaseModel):
+    name: str
+    class_schedule: list[ClassSlot]
+
+
+class CreateStudentFolderRequest(BaseModel):
+    name: str
+    meet_link: str
+    class_schedule: list[ClassSlot]
+    mode: str = "My Python Syllabus"
+
+
+class UpdateClassEventRequest(BaseModel):
+    name: str
+    class_schedule: list[ClassSlot]
+    event_ids: list[str]
+    meet_link: str
+    drive_folder_url: str | None = None
+
+
+class DeleteStudentRequest(BaseModel):
+    drive_folder_url: str | None = None
+    calendar_event_ids: list[str] | None = None
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+def _friendly_google_error(raw: str) -> str:
+    if "invalid_grant" in raw:
+        return "Google auth expired. Visit /api/google/auth to reconnect."
+    if "insufficient" in raw.lower() or "403" in raw:
+        return "Google API not authorised. Visit /api/google/auth to re-connect."
+    return raw
+
+
+# ---------------------------------------------------------------------------
+# Endpoints
+# ---------------------------------------------------------------------------
+
+
+@router.post("/create-class-event")
+async def create_class_event(body: CreateClassEventRequest):
+    supabase = await get_supabase()
+    try:
+        creds = await get_oauth2_credentials(supabase)
+        result = await create_weekly_class_events(creds, body.name, body.class_schedule)
+        return result
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=_friendly_google_error(str(exc))) from exc
+
+
+@router.post("/create-student-folder")
+async def create_student_folder(body: CreateStudentFolderRequest):
+    resolved_mode = (
+        "Other Syllabus" if body.mode == "Other Syllabus" else "My Python Syllabus"
+    )
+    supabase = await get_supabase()
+    try:
+        creds = await get_oauth2_credentials(supabase)
+        folder_url = await create_student_drive_folder(
+            creds, body.name, body.meet_link, body.class_schedule, resolved_mode
+        )
+        return {"url": folder_url}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=_friendly_google_error(str(exc))) from exc
+
+
+@router.post("/update-class-event")
+async def update_class_event(body: UpdateClassEventRequest):
+    supabase = await get_supabase()
+    try:
+        creds = await get_oauth2_credentials(supabase)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=_friendly_google_error(str(exc))) from exc
+
+    trimmed_name = body.name.strip()
+    trimmed_meet_link = body.meet_link.strip()
+    slots = body.class_schedule
+    trimmed_drive_url = body.drive_folder_url.strip() if body.drive_folder_url else None
+
+    # Phase 1: find recurring IDs + update Drive doc in parallel
+    search_result, drive_result = await asyncio.gather(
+        find_recurring_event_ids(creds, trimmed_name),
+        update_student_meet_doc(
+            creds, trimmed_drive_url, trimmed_name, slots, trimmed_meet_link
+        )
+        if trimmed_drive_url
+        else asyncio.sleep(0),
+        return_exceptions=True,
+    )
+
+    search_ids: list[str] = search_result if not isinstance(search_result, Exception) else []
+    merged_event_ids = list(dict.fromkeys(body.event_ids + search_ids))
+
+    # Phase 2: update Calendar events
+    try:
+        cal_result = await update_weekly_class_events(
+            creds, trimmed_name, slots, merged_event_ids, trimmed_meet_link
+        )
+    except Exception as exc:
+        raw = str(exc)
+        raise HTTPException(status_code=500, detail=_friendly_google_error(raw)) from exc
+
+    drive_doc_error: str | None = None
+    if isinstance(drive_result, Exception):
+        drive_doc_error = str(drive_result)
+
+    new_meet_link: str | None = cal_result.get("meet_link")
+    if new_meet_link and trimmed_drive_url:
+        try:
+            await update_student_meet_doc(
+                creds, trimmed_drive_url, trimmed_name, slots, new_meet_link
+            )
+            drive_doc_error = None
+        except Exception as exc:
+            drive_doc_error = str(exc)
+
+    return {
+        "event_ids": cal_result["event_ids"],
+        "meet_link": new_meet_link,
+        "drive_doc_error": drive_doc_error,
+    }
+
+
+@router.post("/delete-student")
+async def delete_student_google_endpoint(body: DeleteStudentRequest):
+    drive_url = body.drive_folder_url
+    event_ids = body.calendar_event_ids
+
+    has_drive = bool(drive_url and drive_url.strip())
+    has_events = bool(event_ids)
+
+    if not has_drive and not has_events:
+        return {"drive_error": None, "calendar_error": None}
+
+    supabase = await get_supabase()
+    try:
+        creds = await get_oauth2_credentials(supabase)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    result = await delete_student_google(creds, drive_url, event_ids)
+    return result
+
+
+@router.post("/sync-all")
+async def sync_all():
+    supabase = await get_supabase()
+    try:
+        creds = await get_oauth2_credentials(supabase)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    try:
+        results = await sync_all_students(supabase, creds)
+        return {"results": results}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
