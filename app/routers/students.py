@@ -80,10 +80,12 @@ async def create_student(body: StudentPayload):
     else:
         data["class_schedule"] = []
 
-    result = await supabase.from_("students").insert(data).select("id").single().execute()
+    result = await supabase.from_("students").insert(data).execute()
     if hasattr(result, "error") and result.error:
         raise HTTPException(status_code=400, detail=result.error.message)
-    return {"id": result.data["id"]}
+    if not result.data:
+        raise HTTPException(status_code=500, detail="Insert returned no data")
+    return {"id": result.data[0]["id"]}
 
 
 @router.put("/students/{student_id}")

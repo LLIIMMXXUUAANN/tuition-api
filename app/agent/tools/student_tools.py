@@ -50,10 +50,10 @@ async def get_student(supabase: AsyncClient, id: str) -> dict:
         .maybe_single()
         .execute()
     )
+    if result is None or not result.data:
+        return {"error": "Student not found"}
     if hasattr(result, "error") and result.error:
         return {"error": result.error.message}
-    if not result.data:
-        return {"error": "Student not found"}
     return {"student": result.data}
 
 
@@ -72,7 +72,7 @@ async def manage_portal_access(
         .maybe_single()
         .execute()
     )
-    if (hasattr(fetch_result, "error") and fetch_result.error) or not fetch_result.data:
+    if fetch_result is None or (hasattr(fetch_result, "error") and fetch_result.error) or not fetch_result.data:
         return {"error": "Student not found"}
 
     current: list[str] = fetch_result.data.get("access_emails") or []
@@ -305,7 +305,7 @@ async def setup_student_google(supabase: AsyncClient, student_id: str) -> dict:
         .single()
         .execute()
     )
-    if (hasattr(fetch_result, "error") and fetch_result.error) or not fetch_result.data:
+    if fetch_result is None or (hasattr(fetch_result, "error") and fetch_result.error) or not fetch_result.data:
         return {"error": "Student not found"}
 
     student = fetch_result.data

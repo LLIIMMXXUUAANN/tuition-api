@@ -54,6 +54,7 @@ async def run_gemini_slot_generation(prompt: str) -> list[ClassifiedSlot]:
         config=types.GenerateContentConfig(
             response_mime_type="application/json",
             response_schema=_RESPONSE_SCHEMA,
+            temperature=0,
         ),
     )
 

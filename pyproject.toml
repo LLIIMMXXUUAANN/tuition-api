@@ -26,7 +26,18 @@ dependencies = [
 ]
 
 [tool.uv]
-dev-dependencies = ["ruff", "pyright"]
+dev-dependencies = [
+    "ruff",
+    "pyright",
+    "pytest>=9.0.3",
+    "pytest-asyncio>=1.4.0",
+    "httpx>=0.28.1",
+    "httpx2>=2.3.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
 
 [tool.ruff]
 line-length = 100

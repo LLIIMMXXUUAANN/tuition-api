@@ -58,7 +58,7 @@ async def get_rules():
         .maybe_single()
         .execute()
     )
-    value: str = result.data["value"] if result.data else ""
+    value: str = result.data["value"] if (result and result.data) else ""
     return {"rules": value}
 
 
@@ -89,7 +89,7 @@ async def get_buffer_mins():
         .maybe_single()
         .execute()
     )
-    buffer_mins: int = int(result.data["value"]) if result.data else 15
+    buffer_mins: int = int(result.data["value"]) if (result and result.data) else 15
     return {"buffer_mins": buffer_mins}
 
 

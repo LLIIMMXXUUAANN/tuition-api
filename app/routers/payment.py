@@ -46,7 +46,7 @@ async def generate_payment(body: GeneratePaymentRequest):
         .execute()
     )
 
-    student_data = result.data
+    student_data = result.data if result is not None else None
     if not student_data:
         raise HTTPException(status_code=404, detail="Student not found")
 

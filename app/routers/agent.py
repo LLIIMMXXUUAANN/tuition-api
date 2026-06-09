@@ -220,6 +220,7 @@ async def agent_chat(request: Request):
                     config=types.GenerateContentConfig(
                         tools=TOOL_DECLARATIONS,
                         system_instruction=system_instruction,
+                        temperature=0,
                     ),
                 ):
                     parts = []

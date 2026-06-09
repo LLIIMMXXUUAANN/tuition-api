@@ -17,8 +17,8 @@ async def get_timetable_settings(supabase: AsyncClient) -> dict:
             supabase.from_("settings").select("value").eq("key", "timetable_rules").maybe_single().execute(),
             supabase.from_("settings").select("value").eq("key", "timetable_buffer_mins").maybe_single().execute(),
         )
-        rules: str = (rules_result.data or {}).get("value", "")
-        raw_buf = (buffer_result.data or {}).get("value")
+        rules: str = ((rules_result.data if rules_result else None) or {}).get("value", "")
+        raw_buf = ((buffer_result.data if buffer_result else None) or {}).get("value")
         buffer_mins: int = int(raw_buf) if raw_buf is not None else 15
         return {"rules": rules, "buffer_mins": buffer_mins}
     except Exception as err:

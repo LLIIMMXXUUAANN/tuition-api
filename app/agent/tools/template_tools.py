@@ -27,10 +27,10 @@ async def get_template(supabase: AsyncClient, id: str) -> dict:
         .maybe_single()
         .execute()
     )
+    if result is None or not result.data:
+        return {"error": f'Template "{id}" not found'}
     if hasattr(result, "error") and result.error:
         return {"error": result.error.message}
-    if not result.data:
-        return {"error": f'Template "{id}" not found'}
 
     meta = template_meta(result.data["id"])
     return {

@@ -26,7 +26,7 @@ async def self_eval(
                 .maybe_single()
                 .execute()
             )
-            return "✓ verified in DB" if result.data else "⚠ could not verify"
+            return "✓ verified in DB" if (result and result.data) else "⚠ could not verify"
 
         if tool_name == "delete_student":
             result = (
@@ -36,7 +36,7 @@ async def self_eval(
                 .maybe_single()
                 .execute()
             )
-            return "✓ verified deleted" if not result.data else "_⚠ student still exists in DB_"
+            return "✓ verified deleted" if not (result and result.data) else "_⚠ student still exists in DB_"
 
         if tool_name == "setup_student_google":
             result = (
@@ -46,7 +46,7 @@ async def self_eval(
                 .maybe_single()
                 .execute()
             )
-            if not result.data:
+            if not (result and result.data):
                 return "⚠ could not verify"
             data = result.data
             parts = [
@@ -63,7 +63,7 @@ async def self_eval(
                 .maybe_single()
                 .execute()
             )
-            if result.data and result.data.get("value") == args.get("rules"):
+            if result and result.data and result.data.get("value") == args.get("rules"):
                 return "✓ rules verified in DB"
             return "⚠ could not verify rules"
 
@@ -75,7 +75,7 @@ async def self_eval(
                 .maybe_single()
                 .execute()
             )
-            if result.data:
+            if result and result.data:
                 try:
                     stored = int(result.data.get("value", ""))
                     if stored == int(args["buffer_mins"]):
