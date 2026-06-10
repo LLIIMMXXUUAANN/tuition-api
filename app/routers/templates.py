@@ -13,6 +13,13 @@ class TemplateUpdatePayload(BaseModel):
     content: str
 
 
+@router.get("")
+async def list_templates():
+    supabase = await get_supabase()
+    result = await supabase.from_("templates").select("id, content").order("id").execute()
+    return result.data or []
+
+
 @router.put("/{template_id}")
 async def update_template(template_id: str, body: TemplateUpdatePayload):
     supabase = await get_supabase()

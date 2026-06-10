@@ -62,7 +62,48 @@ class StudentUpdatePayload(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-@router.post("/students", status_code=201)
+@router.get("")
+async def list_students(status: str | None = None):
+    supabase = await get_supabase()
+    query = supabase.from_("students").select("*").order("name")
+    if status:
+        query = query.eq("status", status)
+    result = await query.execute()
+    return result.data or []
+
+
+@router.get("/portal-lookup")
+async def portal_lookup(email: str):
+    supabase = await get_supabase()
+    result = (
+        await supabase.from_("students")
+        .select("*")
+        .contains("access_emails", [email])
+        .limit(1)
+        .maybe_single()
+        .execute()
+    )
+    if not result.data:
+        raise HTTPException(status_code=404, detail="Student not found")
+    return result.data
+
+
+@router.get("/{student_id}")
+async def get_student(student_id: str):
+    supabase = await get_supabase()
+    result = (
+        await supabase.from_("students")
+        .select("*")
+        .eq("id", student_id)
+        .maybe_single()
+        .execute()
+    )
+    if not result.data:
+        raise HTTPException(status_code=404, detail="Student not found")
+    return result.data
+
+
+@router.post("", status_code=201)
 async def create_student(body: StudentPayload):
     supabase = await get_supabase()
     data = body.model_dump()
@@ -79,7 +120,7 @@ async def create_student(body: StudentPayload):
     return {"id": result.data[0]["id"]}
 
 
-@router.put("/students/{student_id}")
+@router.put("/{student_id}")
 async def update_student(student_id: str, body: StudentUpdatePayload):
     supabase = await get_supabase()
     # Only include fields explicitly provided (exclude_unset strips unset fields)
@@ -94,7 +135,7 @@ async def update_student(student_id: str, body: StudentUpdatePayload):
     return {"ok": True}
 
 
-@router.delete("/students/{student_id}")
+@router.delete("/{student_id}")
 async def delete_student(student_id: str):
     supabase = await get_supabase()
 

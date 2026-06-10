@@ -11,7 +11,7 @@ async def lifespan(app: FastAPI):
     yield
 
 
-app = FastAPI(title="Tuition API", lifespan=lifespan)
+app = FastAPI(title="Tuition API", lifespan=lifespan, redirect_slashes=False)
 
 
 @app.exception_handler(HTTPException)
@@ -47,4 +47,4 @@ app.include_router(payment.router, prefix="/payment")
 app.include_router(timetable.router, prefix="/timetable")
 app.include_router(agent.router, prefix="/agent")
 app.include_router(templates.router, prefix="/templates")
-app.include_router(students.router)
+app.include_router(students.router, prefix="/students")
