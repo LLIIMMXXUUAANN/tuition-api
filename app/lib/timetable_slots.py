@@ -65,15 +65,10 @@ def build_booked_cell_set(booked_slots: list[BookedSlot]) -> set[str]:
 def build_slot_prompt(
     rules: str,
     student_availability: str,
-    booked_slots: list[BookedSlot],
     buffer_slots: set[str],
     booked_cell_set: set[str],
 ) -> str:
     """Build the Gemini classification prompt."""
-    booked_lines = "\n".join(
-        f"- {s.day} {s.start}–{s.end}" for s in booked_slots
-    ) or "None"
-
     classifiable_lines: list[str] = []
     for day in DAYS:
         for ts in TIME_SLOTS:
@@ -93,10 +88,7 @@ TUTOR'S SCHEDULING RULES:
 STUDENT'S AVAILABILITY:
 {availability_section}
 
-CURRENTLY BOOKED SLOTS (already taken — do not include in response):
-{booked_lines}
-
-SLOTS TO CLASSIFY (return exactly these, no others — buffer zones are already excluded):
+SLOTS TO CLASSIFY (return exactly these, no others — booked and buffer zones are already excluded):
 {classifiable_slots}
 
 INSTRUCTIONS:
@@ -126,7 +118,6 @@ async def run_slot_generation(
     prompt = build_slot_prompt(
         rules,
         student_availability or "",
-        booked_slots,
         buffer_set,
         booked_cell_set,
     )
