@@ -31,7 +31,7 @@ async def generate_payment(body: GeneratePaymentRequest):
     if body.template_type not in (1, 2):
         raise HTTPException(status_code=400, detail="templateType must be 1 or 2")
 
-    if body.template_type == 2 and body.carryover < 0:
+    if body.template_type == 2 and body.carryover <= 0:
         raise HTTPException(
             status_code=400, detail="carryover is required for templateType 2"
         )

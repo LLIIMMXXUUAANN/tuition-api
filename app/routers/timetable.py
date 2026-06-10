@@ -6,6 +6,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from app.auth import require_internal_secret
 from app.lib.timetable_slots import BookedSlot, run_slot_generation
 from app.services.supabase_client import get_supabase
+from app.types import ClassSlot
 
 router = APIRouter(dependencies=[Depends(require_internal_secret)])
 
@@ -26,20 +27,12 @@ class UpdateBufferMinsRequest(BaseModel):
     buffer_mins: int = Field(alias="bufferMins")
 
 
-class BookedSlotModel(BaseModel):
-    """Pydantic model for deserialising booked slot objects from JSON."""
-
-    day: str
-    start: str
-    end: str
-
-
 class GenerateSlotsRequest(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     rules: str
     student_availability: str = Field(default="", alias="studentAvailability")
-    booked_slots: list[BookedSlotModel] = Field(default_factory=list, alias="bookedSlots")
+    booked_slots: list[ClassSlot] = Field(default_factory=list, alias="bookedSlots")
     buffer_mins: int = Field(default=15, alias="bufferMins")
 
 
@@ -117,6 +110,8 @@ async def update_buffer_mins(body: UpdateBufferMinsRequest):
 async def generate_slots(body: GenerateSlotsRequest):
     if not body.rules.strip():
         raise HTTPException(status_code=400, detail="rules is required")
+    if body.buffer_mins < 0 or body.buffer_mins > 60:
+        raise HTTPException(status_code=400, detail="buffer_mins must be between 0 and 60")
 
     booked: list[BookedSlot] = [
         BookedSlot(day=s.day, start=s.start, end=s.end) for s in body.booked_slots
