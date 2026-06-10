@@ -1,3 +1,4 @@
+from enum import StrEnum
 from typing import Literal
 
 from pydantic import BaseModel
@@ -5,7 +6,16 @@ from pydantic import BaseModel
 StudentMode = Literal["My Python Syllabus", "Other Syllabus"]
 PaymentMethod = Literal["Monthly", "Weekly"]
 StudentStatus = Literal["Active", "On Hold", "Completed"]
-WeekDay = Literal["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+
+
+class WeekDay(StrEnum):
+    Monday = "Monday"
+    Tuesday = "Tuesday"
+    Wednesday = "Wednesday"
+    Thursday = "Thursday"
+    Friday = "Friday"
+    Saturday = "Saturday"
+    Sunday = "Sunday"
 
 
 class ClassSlot(BaseModel):

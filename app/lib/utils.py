@@ -2,9 +2,9 @@
 
 from collections import defaultdict
 
-from app.types import ClassSlot
+from app.types import ClassSlot, WeekDay
 
-DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+DAYS: list[str] = [d.value for d in WeekDay]
 
 MONTH_NAMES = [
     "January", "February", "March", "April", "May", "June",
