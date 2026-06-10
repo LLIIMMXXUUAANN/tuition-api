@@ -236,9 +236,17 @@ async def update_weekly_class_events(
     existing_event_ids: list[str],
     meet_link: str,
 ) -> dict:
-    """Nuke-and-repave. Returns {event_ids, meet_link: str|None}."""
+    """Nuke-and-repave. Returns {event_ids, meet_link: str|None, schedule_cleared?: bool}."""
     if not schedule:
-        raise ValueError("Student has no class schedule.")
+        loop = asyncio.get_running_loop()
+        calendar_id = settings.google_calendar_id
+        if existing_event_ids:
+            await asyncio.gather(
+                *[loop.run_in_executor(None, partial(_delete_event, creds, calendar_id, eid))
+                  for eid in existing_event_ids],
+                return_exceptions=True,
+            )
+        return {"event_ids": [], "meet_link": None, "schedule_cleared": True}
 
     calendar_id = settings.google_calendar_id
     loop = asyncio.get_running_loop()

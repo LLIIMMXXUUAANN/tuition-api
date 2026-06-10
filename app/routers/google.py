@@ -138,6 +138,8 @@ async def update_class_event(body: UpdateClassEventRequest):
         drive_doc_error = str(drive_result)
 
     new_meet_link: str | None = cal_result.get("meet_link")
+    schedule_cleared: bool = cal_result.get("schedule_cleared", False)
+
     if new_meet_link and trimmed_drive_url:
         try:
             await update_student_meet_doc(
@@ -151,6 +153,7 @@ async def update_class_event(body: UpdateClassEventRequest):
         "event_ids": cal_result["event_ids"],
         "meet_link": new_meet_link,
         "drive_doc_error": drive_doc_error,
+        "schedule_cleared": schedule_cleared,
     }
 
 

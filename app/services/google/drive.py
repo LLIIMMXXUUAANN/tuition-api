@@ -56,6 +56,8 @@ def _fmt(time_str: str) -> str:
 
 
 def build_meet_doc_html(student_name: str, schedule: list[ClassSlot], meet_link: str) -> str:
+    if not schedule:
+        return ""
     slot_lines = "<br>".join(
         f"{_esc(s.day)} · {_fmt(s.start)} – {_fmt(s.end)}" for s in schedule
     )
