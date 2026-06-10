@@ -1,5 +1,6 @@
 """Payment message builder — port of src/shared/lib/payment.ts."""
 
+from dataclasses import dataclass
 from typing import Any
 
 from app.types import ClassSlot
@@ -14,18 +15,12 @@ from app.lib.utils import (
 )
 
 
+@dataclass(frozen=True)
 class PaymentStudentData:
-    def __init__(
-        self,
-        name: str,
-        contact_person: str | None,
-        class_schedule: list[ClassSlot],
-        fee_per_hour: float,
-    ) -> None:
-        self.name = name
-        self.contact_person = contact_person
-        self.class_schedule = class_schedule
-        self.fee_per_hour = fee_per_hour
+    name: str
+    contact_person: str | None
+    class_schedule: list[ClassSlot]
+    fee_per_hour: float
 
 
 def build_payment_message(

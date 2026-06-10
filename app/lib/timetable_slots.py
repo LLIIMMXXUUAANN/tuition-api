@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from app.lib.utils import DAYS, TIME_SLOTS, time_to_mins
@@ -10,11 +11,11 @@ if TYPE_CHECKING:
     from app.services.gemini.slot_generation import ClassifiedSlot
 
 
+@dataclass(frozen=True)
 class BookedSlot:
-    def __init__(self, day: str, start: str, end: str) -> None:
-        self.day = day
-        self.start = start
-        self.end = end
+    day: str
+    start: str
+    end: str
 
 
 SlotState = str  # 'preferred' | 'normal' | 'unavailable'
