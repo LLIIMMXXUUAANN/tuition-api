@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from app.lib.utils import DAYS, TIME_SLOTS, time_to_mins
+from app.types import SlotState
 
 if TYPE_CHECKING:
     from app.services.gemini.slot_generation import ClassifiedSlot
@@ -16,9 +17,6 @@ class BookedSlot:
     day: str
     start: str
     end: str
-
-
-SlotState = str  # 'preferred' | 'normal' | 'unavailable'
 
 
 def compute_buffer_slots(booked_slots: list[BookedSlot], buffer_mins: int) -> set[str]:

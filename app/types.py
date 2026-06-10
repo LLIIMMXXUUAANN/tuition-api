@@ -6,6 +6,7 @@ from pydantic import BaseModel
 StudentMode = Literal["My Python Syllabus", "Other Syllabus"]
 PaymentMethod = Literal["Monthly", "Weekly"]
 StudentStatus = Literal["Active", "On Hold", "Completed"]
+SlotState = Literal["preferred", "normal", "unavailable"]
 
 
 class WeekDay(StrEnum):

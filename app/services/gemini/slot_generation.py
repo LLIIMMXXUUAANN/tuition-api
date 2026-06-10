@@ -9,12 +9,13 @@ from google.genai import types
 from pydantic import BaseModel, ValidationError
 
 from app.config import settings
+from app.types import SlotState
 
 
 class ClassifiedSlot(BaseModel):
     day: str
     time: str
-    state: str  # 'preferred' | 'normal' | 'unavailable'
+    state: SlotState
 
 
 class GenerateSlotsResponse(BaseModel):
