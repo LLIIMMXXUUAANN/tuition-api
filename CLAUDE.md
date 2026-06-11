@@ -40,10 +40,11 @@ This is a FastAPI backend for a tuition management system. Every module is a por
 | Prefix | Router | Purpose |
 |---|---|---|
 | `/google` | `app/routers/google.py` | Google Calendar/Drive CRUD (OAuth2) |
-| `/payment` | `app/routers/payment.py` | Payment record endpoints |
+| `/students` | `app/routers/students.py` | Student CRUD + portal lookup |
+| `/payment` | `app/routers/payment.py` | Payment message generation |
 | `/timetable` | `app/routers/timetable.py` | Timetable rules and slot generation |
 | `/agent` | `app/routers/agent.py` | AI agent SSE streaming (two modes) |
-| _(no prefix)_ | `app/routers/students.py` | Student CRUD (`/students/*`) |
+| `/templates` | `app/routers/templates.py` | Message template read/update |
 
 All routers except the two OAuth endpoints require the `X-Internal-Secret` header (checked by `app/auth.py`). The Google router uses two APIRouter instances: `router` (protected) and `public_router` (no auth) — OAuth endpoints must be browser-accessible and cannot carry the internal secret header.
 
@@ -67,6 +68,8 @@ All routers except the two OAuth endpoints require the `X-Internal-Secret` heade
 
 2. **`POST /agent/lg/chat`** — LangGraph multi-agent mode. Builds a supervisor + three subagents on every request (`make_supervisor` in `app/agent/lg/supervisor.py`) then streams via `app/agent/lg/stream_adapter.py`.
 
+`app/agent/state.py` — module-level `stop_signals: dict[str, bool]` keyed by `request_id`; set by `POST /agent/stop` to signal in-flight requests to stop between tool rounds.
+
 Both endpoints emit the same SSE event types: `chunk`, `step`, `done`, `stopped`, `error`, `download_schedule`, `slots_ready`, and `history`/`lg_history`. A `requestId` can be used with `POST /agent/stop` to abort in-flight requests (via `app/agent/state.stop_signals` dict).
 
 ### LangGraph multi-agent graph
@@ -77,10 +80,12 @@ START → supervisor ──dispatch──► student_agent  ──► supervisor
                               └─► timetable_agent──► supervisor
 ```
 
-- **`app/agent/lg/supervisor.py`** — custom supervisor that avoids `@langchain/langgraph-supervisor`; fixes echoing issues; routes with a single `dispatch` tool containing `handoffs: [{agentName, task}]`. Parallel dispatch is a single `Command` with multiple `Send` targets.
+- **`app/agent/lg/supervisor.py`** — `make_supervisor(supabase, date_string)` + `build_custom_supervisor()`: custom supervisor that avoids `@langchain/langgraph-supervisor`; fixes echoing issues; routes with a single `dispatch` tool (`app/agent/lg/handoff.py`) containing `handoffs: [{agentName, task}]`. Parallel dispatch is a single `Command` with multiple `Send` targets. One LLM call per supervisor turn (not two).
 - **`app/agent/lg/subagent.py`** — `build_subagent()` creates a standard ReAct graph (agent → tools → optional post-hook → agent → END).
-- Each of the three subagents (`student_agent.py`, `template_agent.py`, `timetable_agent.py`) wraps its tool set with a system prompt.
-- **`app/agent/lg/stream_adapter.py`** — translates LangGraph's `(namespace, mode, data)` event tuples into the same SSE event types as the classic endpoint. `is_routing_relevant()` filters what gets stored in `lgHistory`.
+- **`app/agent/lg/tool_factories.py`** — `make_student_tools()`, `make_template_tools()`, `make_timetable_tools()`: wrap the 19 shared tool implementations in Zod-equivalent Pydantic schemas for LangGraph.
+- Each of the three subagents (`student_agent.py`, `template_agent.py`, `timetable_agent.py`) wraps its tool set with a domain-specific system prompt.
+- **`app/agent/lg/post_hooks.py`** — `make_student_post_hook()`, `make_timetable_post_hook()`: run `self_eval` after mutations and inject the verdict as a `SystemMessage(name="self_eval")`.
+- **`app/agent/lg/stream_adapter.py`** — `pipe_langgraph_stream()` translates LangGraph's `(namespace, mode, data)` event tuples into the same SSE event types as the classic endpoint. `is_routing_relevant()` filters what gets stored in `lgHistory` (keeps human messages, dispatch decisions, subagent final replies, self-eval verdicts; drops subagent-internal tool call pairs).
 
 ### Google services
 
@@ -106,6 +111,6 @@ All Google API calls go through `app/services/google/`:
 
 ### Gemini integration
 
-- Classic agent: `google-genai` SDK (`genai.Client.aio.models.generate_content_stream`), model `gemini-2.5-flash`
-- LangGraph subagents: `langchain-google-genai` via `app/agent/lg/model.py` (`get_gemini_chat_model`)
-- LangSmith tracing: opt-in via `langchain_tracing=true` in `.env`
+- **Classic agent:** `google-genai` SDK — `app/services/gemini/client.py` exports a module-level singleton `gemini_client` (`google.genai.Client`). `app/services/gemini/slot_generation.py` exports `run_gemini_slot_generation(prompt)` which calls `gemini-2.5-flash` with structured JSON output (`responseMimeType: application/json` + schema) and validates via Pydantic.
+- **LangGraph subagents:** `langchain-google-genai` — `app/agent/lg/model.py` exports `get_gemini_chat_model()` which returns a fresh `ChatGoogleGenerativeAI` instance per call (model: `gemini-2.5-flash`, `temperature=0`, `thinking_budget=0` to disable the thinking pass).
+- **LangSmith tracing:** opt-in via `langchain_tracing=true` in `.env`.
