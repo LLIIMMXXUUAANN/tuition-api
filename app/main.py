@@ -25,9 +25,11 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
     msg = f"{' → '.join(str(l) for l in first['loc'] if l != 'body')}: {first['msg']}"
     return JSONResponse(status_code=422, content={"error": msg})
 
+from app.config import settings  # noqa: E402
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
+    allow_origins=[o.strip() for o in settings.allowed_origins.split(",")],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
