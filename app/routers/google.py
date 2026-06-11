@@ -4,7 +4,11 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from app.auth import require_internal_secret
-from app.services.google.auth import get_oauth2_credentials
+from app.services.google.auth import (
+    build_google_auth_url,
+    exchange_code_for_refresh_token,
+    get_oauth2_credentials,
+)
 from app.services.google.calendar import (
     create_weekly_class_events,
     find_recurring_event_ids,
@@ -68,6 +72,26 @@ def _friendly_google_error(raw: str) -> str:
 # ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
+
+
+@router.get("/auth")
+async def google_auth():
+    return {"url": build_google_auth_url()}
+
+
+@router.get("/callback")
+async def google_callback(code: str, supabase=Depends(get_supabase)):
+    try:
+        refresh_token = await exchange_code_for_refresh_token(code)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    await supabase.from_("settings").upsert(
+        {"key": "google_refresh_token", "value": refresh_token},
+        on_conflict="key",
+    ).execute()
+
+    return {"ok": True, "message": "Google connected successfully. You can close this tab."}
 
 
 @router.post("/create-class-event")
