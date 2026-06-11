@@ -10,7 +10,7 @@ from supabase import AsyncClient
 
 from app.agent.tools.shared import err_msg
 from app.lib.utils import get_weekday_dates, group_slots_by_day, time_to_mins
-from app.services.google.auth import get_oauth2_credentials
+from app.services.google.auth import get_oauth2_credentials, save_token_if_rotated
 from app.services.google.calendar import create_weekly_class_events, update_weekly_class_events
 from app.services.google.cleanup import delete_student_google
 from app.services.google.drive import create_student_drive_folder, update_student_meet_doc
@@ -190,7 +190,7 @@ async def update_student(supabase: AsyncClient, id: str, fields: dict) -> dict:
         return {"success": True, "suggestGoogleSetup": True}
 
     try:
-        creds = await get_oauth2_credentials(supabase)
+        creds, stored_token = await get_oauth2_credentials(supabase)
     except Exception as err:
         return {
             "success": True,
@@ -249,6 +249,7 @@ async def update_student(supabase: AsyncClient, id: str, fields: dict) -> dict:
     if isinstance(drive_result, Exception) and not new_meet_link_generated:
         warnings.append(f"Drive Meet doc update failed: {err_msg(drive_result)}")
 
+    await save_token_if_rotated(creds, stored_token, supabase)
     response: dict = {"success": True}
     if warnings:
         response["googleWarnings"] = warnings
@@ -269,12 +270,13 @@ async def delete_student(supabase: AsyncClient, id: str) -> dict:
 
     if student and (student.get("google_drive_link") or student.get("calendar_event_ids")):
         try:
-            creds = await get_oauth2_credentials(supabase)
+            creds, stored_token = await get_oauth2_credentials(supabase)
             google_result = await delete_student_google(
                 creds,
                 student.get("google_drive_link"),
                 student.get("calendar_event_ids"),
             )
+            await save_token_if_rotated(creds, stored_token, supabase)
             if google_result.get("drive_error"):
                 warnings.append(f"Drive cleanup warning: {google_result['drive_error']}")
             if google_result.get("calendar_error"):
@@ -326,7 +328,7 @@ async def setup_student_google(supabase: AsyncClient, student_id: str) -> dict:
         return {"result": "Already fully set up — Calendar ✓, Drive ✓. Nothing to do."}
 
     try:
-        creds = await get_oauth2_credentials(supabase)
+        creds, stored_token = await get_oauth2_credentials(supabase)
     except Exception as err:
         return {"error": err_msg(err, "Google not connected")}
 
@@ -376,13 +378,15 @@ async def setup_student_google(supabase: AsyncClient, student_id: str) -> dict:
     else:
         summary.append("Drive ✓ (already set up, skipped)")
 
+    await save_token_if_rotated(creds, stored_token, supabase)
     return {"result": ", ".join(summary)}
 
 
 async def run_sync_all(supabase: AsyncClient) -> dict:
     try:
-        creds = await get_oauth2_credentials(supabase)
+        creds, stored_token = await get_oauth2_credentials(supabase)
         results = await sync_all_students(supabase, creds)
+        await save_token_if_rotated(creds, stored_token, supabase)
         return {"results": results}
     except Exception as err:
         msg = err_msg(err, "Google auth failed")
