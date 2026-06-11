@@ -4,11 +4,10 @@ from __future__ import annotations
 
 import json
 
-from google import genai
 from google.genai import types
 from pydantic import BaseModel, ValidationError
 
-from app.config import settings
+from app.services.gemini.client import gemini_client
 from app.types import SlotState
 
 
@@ -47,9 +46,7 @@ _RESPONSE_SCHEMA = types.Schema(
 
 async def run_gemini_slot_generation(prompt: str) -> list[ClassifiedSlot]:
     """Call Gemini 2.5 Flash with structured output; return validated slot list."""
-    client = genai.Client(api_key=settings.gemini_api_key)
-
-    response = await client.aio.models.generate_content(
+    response = await gemini_client.aio.models.generate_content(
         model="gemini-2.5-flash",
         contents=prompt,
         config=types.GenerateContentConfig(

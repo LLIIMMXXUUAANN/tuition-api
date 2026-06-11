@@ -12,7 +12,6 @@ import time
 
 import pytz
 from fastapi import APIRouter, Depends, Request
-from google import genai
 from google.genai import types
 from langchain_core.messages import (
     AIMessage as LCAIMessage,
@@ -50,7 +49,7 @@ from app.agent.tools import (
     update_timetable_rules,
 )
 from app.auth import require_internal_secret
-from app.config import settings
+from app.services.gemini.client import gemini_client
 from app.services.supabase_client import get_supabase
 
 router = APIRouter(dependencies=[Depends(require_internal_secret)])
@@ -202,7 +201,6 @@ async def agent_chat(request: Request):
                 role = "model" if m["role"] == "agent" else m["role"]
                 contents.append(types.Content(role=role, parts=[types.Part(text=m["content"])]))
 
-        client = genai.Client(api_key=settings.gemini_api_key)
         got_reply = False
         last_mutation_tool: dict | None = None
 
@@ -214,7 +212,7 @@ async def agent_chat(request: Request):
                 round_text = ""
                 round_fn_calls: list = []
 
-                async for chunk in client.aio.models.generate_content_stream(
+                async for chunk in gemini_client.aio.models.generate_content_stream(
                     model="gemini-2.5-flash",
                     contents=contents,
                     config=types.GenerateContentConfig(
