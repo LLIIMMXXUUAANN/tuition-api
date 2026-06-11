@@ -1,5 +1,4 @@
 import asyncio
-import io
 import json
 import re
 from functools import partial
