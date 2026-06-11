@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from app.auth import require_internal_secret
-from app.services.google.auth import get_oauth2_credentials
+from app.services.google.auth import get_oauth2_credentials, save_token_if_rotated
 from app.services.google.calendar import (
     create_weekly_class_events,
     find_recurring_event_ids,
@@ -138,7 +138,7 @@ async def create_student(body: StudentPayload):
     # Drive folder always created (blank doc if no schedule). Calendar events only if schedule.
     google_warning: str | None = None
     try:
-        creds = await get_oauth2_credentials(supabase)
+        creds, stored_token = await get_oauth2_credentials(supabase)
         meet_link = ""
         event_ids: list[str] = []
 
@@ -151,6 +151,7 @@ async def create_student(body: StudentPayload):
         drive_url = await create_student_drive_folder(
             creds, body.name, meet_link, body.class_schedule or [], resolved_mode
         )
+        await save_token_if_rotated(creds, stored_token, supabase)
         await supabase.from_("students").update({
             "google_meet_link": meet_link or None,
             "google_drive_link": drive_url,
@@ -193,7 +194,7 @@ async def update_student(student_id: str, body: StudentUpdatePayload):
             current_mode: str = update_data.get("mode") or current.get("mode", "My Python Syllabus")
 
             try:
-                creds = await get_oauth2_credentials(supabase)
+                creds, stored_token = await get_oauth2_credentials(supabase)
 
                 if not new_schedule:
                     # Clear: delete Calendar events + blank Drive doc
@@ -257,6 +258,8 @@ async def update_student(student_id: str, body: StudentUpdatePayload):
                     update_data["google_meet_link"] = meet_link
                     update_data["calendar_event_ids"] = cal["event_ids"]
 
+                await save_token_if_rotated(creds, stored_token, supabase)
+
             except Exception as exc:
                 google_warning = _google_err(exc)
 
@@ -288,8 +291,9 @@ async def delete_student(student_id: str):
     google_errors: dict = {}
     if drive_url or event_ids:
         try:
-            creds = await get_oauth2_credentials(supabase)
+            creds, stored_token = await get_oauth2_credentials(supabase)
             google_errors = await delete_student_google(creds, drive_url, event_ids)
+            await save_token_if_rotated(creds, stored_token, supabase)
         except Exception as exc:
             google_errors = {"google_error": str(exc)}
 

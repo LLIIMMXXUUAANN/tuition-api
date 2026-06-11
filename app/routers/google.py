@@ -8,6 +8,7 @@ from app.services.google.auth import (
     build_google_auth_url,
     exchange_code_for_refresh_token,
     get_oauth2_credentials,
+    save_token_if_rotated,
 )
 from app.services.google.calendar import (
     create_weekly_class_events,
@@ -98,8 +99,9 @@ async def google_callback(code: str, supabase=Depends(get_supabase)):
 async def create_class_event(body: CreateClassEventRequest):
     supabase = await get_supabase()
     try:
-        creds = await get_oauth2_credentials(supabase)
+        creds, stored_token = await get_oauth2_credentials(supabase)
         result = await create_weekly_class_events(creds, body.name, body.class_schedule)
+        await save_token_if_rotated(creds, stored_token, supabase)
         return result
     except Exception as exc:
         raise HTTPException(status_code=500, detail=_friendly_google_error(str(exc))) from exc
@@ -112,10 +114,11 @@ async def create_student_folder(body: CreateStudentFolderRequest):
     )
     supabase = await get_supabase()
     try:
-        creds = await get_oauth2_credentials(supabase)
+        creds, stored_token = await get_oauth2_credentials(supabase)
         folder_url = await create_student_drive_folder(
             creds, body.name, body.meet_link, body.class_schedule, resolved_mode
         )
+        await save_token_if_rotated(creds, stored_token, supabase)
         return {"url": folder_url}
     except Exception as exc:
         raise HTTPException(status_code=500, detail=_friendly_google_error(str(exc))) from exc
@@ -125,7 +128,7 @@ async def create_student_folder(body: CreateStudentFolderRequest):
 async def update_class_event(body: UpdateClassEventRequest):
     supabase = await get_supabase()
     try:
-        creds = await get_oauth2_credentials(supabase)
+        creds, stored_token = await get_oauth2_credentials(supabase)
     except Exception as exc:
         raise HTTPException(status_code=500, detail=_friendly_google_error(str(exc))) from exc
 
@@ -173,6 +176,7 @@ async def update_class_event(body: UpdateClassEventRequest):
         except Exception as exc:
             drive_doc_error = str(exc)
 
+    await save_token_if_rotated(creds, stored_token, supabase)
     return {
         "event_ids": cal_result["event_ids"],
         "meet_link": new_meet_link,
@@ -194,11 +198,12 @@ async def delete_student_google_endpoint(body: DeleteStudentRequest):
 
     supabase = await get_supabase()
     try:
-        creds = await get_oauth2_credentials(supabase)
+        creds, stored_token = await get_oauth2_credentials(supabase)
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
     result = await delete_student_google(creds, drive_url, event_ids)
+    await save_token_if_rotated(creds, stored_token, supabase)
     return result
 
 
@@ -206,12 +211,13 @@ async def delete_student_google_endpoint(body: DeleteStudentRequest):
 async def sync_all():
     supabase = await get_supabase()
     try:
-        creds = await get_oauth2_credentials(supabase)
+        creds, stored_token = await get_oauth2_credentials(supabase)
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
     try:
         results = await sync_all_students(supabase, creds)
+        await save_token_if_rotated(creds, stored_token, supabase)
         return {"results": results}
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc

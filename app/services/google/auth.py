@@ -47,8 +47,8 @@ async def exchange_code_for_refresh_token(code: str) -> str:
         return token
 
 
-async def get_oauth2_credentials(supabase) -> Credentials:
-    """Reads the stored refresh token from Supabase and returns OAuth2 credentials."""
+async def get_oauth2_credentials(supabase) -> tuple[Credentials, str]:
+    """Returns (credentials, original_refresh_token) — caller should check for rotation after ops."""
     result = (
         await supabase.from_("settings")
         .select("value")
@@ -60,10 +60,25 @@ async def get_oauth2_credentials(supabase) -> Credentials:
     if not refresh_token:
         raise RuntimeError("Google not connected. Visit /api/google/auth to connect.")
 
-    return Credentials(
+    creds = Credentials(
         token=None,
         refresh_token=refresh_token,
         token_uri=GOOGLE_TOKEN_URI,
         client_id=settings.google_client_id,
         client_secret=settings.google_client_secret,
     )
+    return creds, refresh_token
+
+
+async def save_token_if_rotated(creds: Credentials, original_token: str, supabase) -> None:
+    """Persist a rotated refresh token to DB. Non-fatal if the save fails."""
+    new_token = creds.refresh_token
+    if not new_token or new_token == original_token:
+        return
+    try:
+        await supabase.from_("settings").upsert(
+            {"key": "google_refresh_token", "value": new_token},
+            on_conflict="key",
+        ).execute()
+    except Exception:
+        pass
