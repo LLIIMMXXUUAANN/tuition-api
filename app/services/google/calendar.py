@@ -234,7 +234,7 @@ async def update_weekly_class_events(
     student_name: str,
     schedule: list[ClassSlot],
     existing_event_ids: list[str],
-    meet_link: str,
+    meet_link: str | None = None,
 ) -> dict:
     """Nuke-and-repave. Returns {event_ids, meet_link: str|None, schedule_cleared?: bool}."""
     if not schedule:
@@ -305,16 +305,17 @@ async def update_weekly_class_events(
         primary_result_id = eid
         new_meet_link = res.get("hangoutLink") or None
 
-    effective_meet_link = new_meet_link or meet_link
+    effective_meet_link = (
+        new_meet_link
+        or (primary.get("hangoutLink") if primary else None)
+        or meet_link
+    )
     ids_to_delete = [eid for eid in all_existing_ids if eid != primary_id]
 
     async def _del(event_id: str) -> None:
-        try:
-            await loop.run_in_executor(
-                None, partial(_delete_event, creds, calendar_id, event_id)
-            )
-        except Exception as exc:
-            print(f"Failed to delete calendar event {event_id}: {exc}")
+        await loop.run_in_executor(
+            None, partial(_delete_event, creds, calendar_id, event_id)
+        )
 
     async def _create_slot(slot: ClassSlot) -> str:
         by_day = BYDAY.get(slot.day)
@@ -342,8 +343,14 @@ async def update_weekly_class_events(
         return_exceptions=True,
     )
 
+    del_results = results[: len(ids_to_delete)]
+    create_results = results[len(ids_to_delete) :]
+
+    failed = [str(r) for r in del_results if isinstance(r, Exception)]
+    if failed:
+        raise RuntimeError(f"Failed to delete calendar events: {'; '.join(failed)}")
+
     remaining_ids: list[str] = []
-    create_results = results[len(ids_to_delete):]
     for r in create_results:
         if isinstance(r, Exception):
             raise r
@@ -352,4 +359,5 @@ async def update_weekly_class_events(
     return {
         "event_ids": [primary_result_id] + remaining_ids,
         "meet_link": new_meet_link,
+        "effective_meet_link": effective_meet_link,
     }
