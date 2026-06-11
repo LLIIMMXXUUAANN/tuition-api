@@ -1,9 +1,28 @@
+import secrets
+import time
 import urllib.parse
 
 import httpx
 from google.oauth2.credentials import Credentials
 
 from app.config import settings
+
+# --- OAuth state tokens (CSRF protection) ---
+
+_pending_states: dict[str, float] = {}  # token → expiry (monotonic)
+
+
+def generate_state_token() -> str:
+    token = secrets.token_urlsafe(32)
+    _pending_states[token] = time.monotonic() + 600  # 10-minute TTL
+    return token
+
+
+def verify_and_consume_state(token: str) -> None:
+    """Verify and delete the state token. Raises ValueError if invalid or expired."""
+    expiry = _pending_states.pop(token, None)
+    if expiry is None or time.monotonic() > expiry:
+        raise ValueError("Invalid or expired state token.")
 
 GOOGLE_TOKEN_URI = "https://oauth2.googleapis.com/token"
 
@@ -13,7 +32,7 @@ GOOGLE_SCOPES = [
 ]
 
 
-def build_google_auth_url() -> str:
+def build_google_auth_url(state: str) -> str:
     params = {
         "client_id": settings.google_client_id,
         "redirect_uri": settings.google_redirect_uri,
@@ -21,6 +40,7 @@ def build_google_auth_url() -> str:
         "scope": " ".join(GOOGLE_SCOPES),
         "access_type": "offline",
         "prompt": "consent",
+        "state": state,
     }
     return "https://accounts.google.com/o/oauth2/v2/auth?" + urllib.parse.urlencode(params)
 

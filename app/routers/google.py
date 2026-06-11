@@ -8,8 +8,10 @@ from app.auth import require_internal_secret
 from app.services.google.auth import (
     build_google_auth_url,
     exchange_code_for_refresh_token,
+    generate_state_token,
     get_oauth2_credentials,
     save_token_if_rotated,
+    verify_and_consume_state,
 )
 from app.services.google.calendar import (
     create_weekly_class_events,
@@ -79,11 +81,16 @@ def _friendly_google_error(raw: str) -> str:
 
 @public_router.get("/auth")
 async def google_auth():
-    return RedirectResponse(url=build_google_auth_url())
+    state = generate_state_token()
+    return RedirectResponse(url=build_google_auth_url(state))
 
 
 @public_router.get("/callback")
-async def google_callback(code: str, supabase=Depends(get_supabase)):
+async def google_callback(code: str, state: str, supabase=Depends(get_supabase)):
+    try:
+        verify_and_consume_state(state)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     try:
         refresh_token = await exchange_code_for_refresh_token(code)
     except Exception as exc:
