@@ -32,7 +32,7 @@ Server starts at `http://127.0.0.1:8000`. API docs at `http://127.0.0.1:8000/doc
 | `GEMINI_API_KEY` | Google AI Studio API key (Gemini 2.5 Flash) |
 | `GOOGLE_CLIENT_ID` | OAuth 2.0 client ID |
 | `GOOGLE_CLIENT_SECRET` | OAuth 2.0 client secret |
-| `GOOGLE_REDIRECT_URI` | OAuth callback URI — must match Google Cloud console (`http://127.0.0.1:8000/google/callback` locally) |
+| `GOOGLE_REDIRECT_URI` | OAuth callback URI — must match Google Cloud console (`http://localhost:3000/api/google/callback` locally) |
 | `GOOGLE_STUDENTS_FOLDER_ID` | Drive folder ID where student folders are created |
 | `GOOGLE_CALENDAR_ID` | Google Calendar ID for class events |
 | `GOOGLE_LEC_TOPIC1_FILE_ID` | Drive file ID for Topic 1 shortcut (My Python Syllabus students only) |
@@ -61,8 +61,9 @@ Tests hit real Supabase — set up `.env` before running.
 
 1. Enable Drive API + Calendar API in Google Cloud Console
 2. Add the admin email as a test user on the OAuth consent screen
-3. Set `GOOGLE_REDIRECT_URI=http://127.0.0.1:8000/google/callback` (local) or your production URL
-4. Visit `http://127.0.0.1:8000/google/auth` as admin — completes the OAuth flow and stores the refresh token in Supabase
+3. In Google Cloud Console → OAuth credentials → Authorised redirect URIs, add `http://localhost:3000/api/google/callback` (local) and your production URL (e.g. `https://lim-tuition.vercel.app/api/google/callback`)
+4. Set `GOOGLE_REDIRECT_URI` in `tuition-api/.env` to the Next.js callback URL (e.g. `http://localhost:3000/api/google/callback`)
+5. Visit `http://localhost:3000/api/google/auth` as admin — Next.js fetches the OAuth URL from FastAPI and redirects the browser; after consent, Google redirects to Next.js `/api/google/callback` which saves the refresh token via FastAPI
 
 ## Architecture
 
@@ -73,7 +74,7 @@ app/
   auth.py              → require_internal_secret dependency
   types.py             → ClassSlot, Student, enums (StudentMode, StudentStatus, SlotState…)
   routers/
-    google.py          → Calendar/Drive CRUD + OAuth setup (public_router + router)
+    google.py          → Calendar/Drive CRUD + OAuth setup (all routes protected)
     students.py        → Student CRUD + portal lookup
     payment.py         → Payment message generation
     timetable.py       → Timetable rules + buffer + slot generation
@@ -122,8 +123,8 @@ app/
 | Method | Path | Auth | Description |
 |---|---|---|---|
 | `GET` | `/` or `/health` | — | Health check |
-| `GET` | `/google/auth` | — | Redirect to Google OAuth consent screen |
-| `GET` | `/google/callback` | — | OAuth callback — saves refresh token |
+| `GET` | `/google/auth-url` | ✓ | Return Google OAuth consent URL (Next.js fetches this, then redirects the browser) |
+| `POST` | `/google/callback` | ✓ | Exchange OAuth code for refresh token and save it (called by Next.js after Google redirects) |
 | `POST` | `/google/create-class-event` | ✓ | Create weekly recurring Calendar events |
 | `POST` | `/google/create-student-folder` | ✓ | Create Drive folder structure |
 | `POST` | `/google/update-class-event` | ✓ | Nuke-and-repave Calendar events + update Drive doc |

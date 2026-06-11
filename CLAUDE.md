@@ -46,7 +46,7 @@ This is a FastAPI backend for a tuition management system. Every module is a por
 | `/agent` | `app/routers/agent.py` | AI agent SSE streaming (two modes) |
 | `/templates` | `app/routers/templates.py` | Message template read/update |
 
-All routers except the two OAuth endpoints require the `X-Internal-Secret` header (checked by `app/auth.py`). The Google router uses two APIRouter instances: `router` (protected) and `public_router` (no auth) — OAuth endpoints must be browser-accessible and cannot carry the internal secret header.
+All routers require the `X-Internal-Secret` header (checked by `app/auth.py`). The OAuth flow uses Next.js as the browser-facing layer: `GET /google/auth-url` returns the consent URL (Next.js redirects the browser), and `POST /google/callback` receives `{code, state}` from Next.js after Google redirects back — both are protected, not browser-accessible.
 
 ### Configuration
 

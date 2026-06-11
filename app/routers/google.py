@@ -1,7 +1,6 @@
 import asyncio
 
 from fastapi import APIRouter, Depends, HTTPException
-from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 
 from app.auth import require_internal_secret
@@ -28,7 +27,6 @@ from app.services.supabase_client import get_supabase
 from app.types import ClassSlot
 
 router = APIRouter(dependencies=[Depends(require_internal_secret)])
-public_router = APIRouter()  # OAuth setup — visited directly by browser, no internal secret
 
 
 # ---------------------------------------------------------------------------
@@ -79,20 +77,26 @@ def _friendly_google_error(raw: str) -> str:
 # ---------------------------------------------------------------------------
 
 
-@public_router.get("/auth")
-async def google_auth():
+@router.get("/auth-url")
+async def google_auth_url():
     state = generate_state_token()
-    return RedirectResponse(url=build_google_auth_url(state))
+    url = build_google_auth_url(state)
+    return {"url": url, "state": state}
 
 
-@public_router.get("/callback")
-async def google_callback(code: str, state: str, supabase=Depends(get_supabase)):
+class CallbackRequest(BaseModel):
+    code: str
+    state: str
+
+
+@router.post("/callback")
+async def google_callback(body: CallbackRequest, supabase=Depends(get_supabase)):
     try:
-        verify_and_consume_state(state)
+        verify_and_consume_state(body.state)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     try:
-        refresh_token = await exchange_code_for_refresh_token(code)
+        refresh_token = await exchange_code_for_refresh_token(body.code)
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
