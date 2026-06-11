@@ -45,7 +45,7 @@ This is a FastAPI backend for a tuition management system. Every module is a por
 | `/agent` | `app/routers/agent.py` | AI agent SSE streaming (two modes) |
 | _(no prefix)_ | `app/routers/students.py` | Student CRUD (`/students/*`) |
 
-All routers require the `X-Internal-Secret` header (checked by `app/auth.py`).
+All routers except the two OAuth endpoints require the `X-Internal-Secret` header (checked by `app/auth.py`). The Google router uses two APIRouter instances: `router` (protected) and `public_router` (no auth) — OAuth endpoints must be browser-accessible and cannot carry the internal secret header.
 
 ### Configuration
 
@@ -85,11 +85,16 @@ START → supervisor ──dispatch──► student_agent  ──► supervisor
 ### Google services
 
 All Google API calls go through `app/services/google/`:
-- `auth.py` — reads refresh token from Supabase, returns `google.oauth2.credentials.Credentials`
-- `calendar.py` — weekly recurring Calendar events
-- `drive.py` — student Drive folders and Meet docs
-- `cleanup.py` — bulk-delete on student removal
-- `sync.py` — syncs all active students' Google resources
+
+- **`auth.py`** — `get_oauth2_credentials(supabase)` reads the refresh token from the `settings` table and returns `(Credentials, original_token)`. `save_token_if_rotated(creds, original_token, supabase)` detects and persists rotated refresh tokens (Google Auth updates `creds.refresh_token` in-place on rotation). CSRF protection: `generate_state_token()` / `verify_and_consume_state(token)` use a module-level `_pending_states: dict[str, float]` with a 10-minute TTL — the state token is embedded in the OAuth redirect URL and verified before the code exchange. Every endpoint that calls Google APIs unpacks the tuple and calls `save_token_if_rotated` after the operation.
+
+- **`calendar.py`** — `create_weekly_class_events` creates recurring events; first slot gets a Google Meet conference. `update_weekly_class_events` is nuke-and-repave: patches the primary event (the one with `hangoutLink`) or creates a new one with `conferenceData` if the primary was deleted; always returns `effective_meet_link` (existing `hangoutLink` from primary, or newly generated link) alongside the backward-compat `meet_link` (only set when freshly generated). `find_recurring_event_ids` searches Calendar over 90 days. `meet_link` param is `str | None = None` — callers may omit it when the DB has no stored link.
+
+- **`drive.py`** — student Drive folder creation (`My Python Syllabus`: 4 subfolders + Meet doc; `Other Syllabus`: Meet doc only) and `update_student_meet_doc` rewrites the "Google Meet Link" doc.
+
+- **`cleanup.py`** — `delete_student_google` trashes Drive folder + deletes Calendar events in parallel via `asyncio.gather`; both operations are non-fatal. Calendar deletes collect per-event failures and raise `RuntimeError` if any event could not be deleted (404/410 are silently swallowed as already-deleted).
+
+- **`sync.py`** — `sync_all_students` handles all missing-resource combinations. Only skips students with no `class_schedule`. For each student: (1) search Calendar and merge found IDs with DB IDs; (2) if event IDs exist → `update_weekly_class_events` (nuke-and-repave, recovers existing Meet link via `effective_meet_link`); if none → `create_weekly_class_events` (fresh creation); (3) save updated IDs + Meet link to DB only if changed; (4) if Drive folder missing → `create_student_drive_folder`; if folder exists → `update_student_meet_doc`. `invalid_grant` errors surface as "Google auth expired — reconnect".
 
 ### Lib utilities
 
