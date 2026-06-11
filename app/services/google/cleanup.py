@@ -32,15 +32,21 @@ async def delete_student_google(
             return
         calendar_id = settings.google_calendar_id
 
-        async def _delete_one(event_id: str) -> None:
+        async def _delete_one(event_id: str) -> str | None:
             try:
                 await loop.run_in_executor(
                     None, partial(_delete_event, creds, calendar_id, event_id)
                 )
+                return None
             except Exception as exc:
-                print(f"Failed to delete calendar event {event_id}: {exc}")
+                if "404" in str(exc) or "410" in str(exc):
+                    return None  # already deleted — desired outcome
+                return event_id
 
-        await asyncio.gather(*[_delete_one(eid) for eid in event_ids if eid])
+        results = await asyncio.gather(*[_delete_one(eid) for eid in event_ids if eid])
+        failed = [r for r in results if r is not None]
+        if failed:
+            raise RuntimeError(f"Failed to delete calendar events: {', '.join(failed)}")
 
     drive_result, calendar_result = await asyncio.gather(
         _trash_drive(),
