@@ -34,7 +34,7 @@ _RESPONSE_SCHEMA = types.Schema(
                     "time": types.Schema(type=types.Type.STRING),
                     "state": types.Schema(
                         type=types.Type.STRING,
-                        enum=["preferred", "normal", "unavailable"],
+                        enum=[s.value for s in SlotState],
                     ),
                 },
                 required=["day", "time", "state"],

@@ -129,7 +129,7 @@ async def run_slot_generation(
     for slot in raw_slots:
         key = f"{slot.day}|{slot.time}"
         if key in buffer_set:
-            result.append(ClassifiedSlot(day=slot.day, time=slot.time, state="unavailable"))
+            result.append(ClassifiedSlot(day=slot.day, time=slot.time, state=SlotState.unavailable))
         else:
             result.append(slot)
 
