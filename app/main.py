@@ -45,6 +45,7 @@ async def health():
 # Routers mounted here as each phase is implemented
 from app.routers import google, payment, timetable, agent, students, templates  # noqa: E402
 app.include_router(google.router, prefix="/google")
+app.include_router(google.public_router, prefix="/google")
 app.include_router(payment.router, prefix="/payment")
 app.include_router(timetable.router, prefix="/timetable")
 app.include_router(agent.router, prefix="/agent")
