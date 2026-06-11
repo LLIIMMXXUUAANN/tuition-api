@@ -5,6 +5,8 @@ from google.oauth2.credentials import Credentials
 
 from app.config import settings
 
+GOOGLE_TOKEN_URI = "https://oauth2.googleapis.com/token"
+
 GOOGLE_SCOPES = [
     "https://www.googleapis.com/auth/drive",
     "https://www.googleapis.com/auth/calendar",
@@ -27,7 +29,7 @@ async def exchange_code_for_refresh_token(code: str) -> str:
     """Exchange an auth code for a refresh token."""
     async with httpx.AsyncClient() as client:
         r = await client.post(
-            "https://oauth2.googleapis.com/token",
+            GOOGLE_TOKEN_URI,
             data={
                 "code": code,
                 "client_id": settings.google_client_id,
@@ -61,7 +63,7 @@ async def get_oauth2_credentials(supabase) -> Credentials:
     return Credentials(
         token=None,
         refresh_token=refresh_token,
-        token_uri="https://oauth2.googleapis.com/token",
+        token_uri=GOOGLE_TOKEN_URI,
         client_id=settings.google_client_id,
         client_secret=settings.google_client_secret,
     )
