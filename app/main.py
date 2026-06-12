@@ -42,11 +42,16 @@ async def health():
     return {"status": "ok"}
 
 
-# Routers mounted here as each phase is implemented
-from app.routers import google, payment, timetable, agent, students, templates  # noqa: E402
-app.include_router(google.router, prefix="/google")
-app.include_router(payment.router, prefix="/payment")
-app.include_router(timetable.router, prefix="/timetable")
-app.include_router(agent.router, prefix="/agent")
-app.include_router(templates.router, prefix="/templates")
-app.include_router(students.router, prefix="/students")
+from app.features.google.router import router as google_router  # noqa: E402
+from app.features.students.router import router as students_router  # noqa: E402
+from app.features.templates.router import router as templates_router  # noqa: E402
+from app.features.payment.router import router as payment_router  # noqa: E402
+from app.features.timetable.router import router as timetable_router  # noqa: E402
+from app.features.agent.router import router as agent_router  # noqa: E402
+
+app.include_router(google_router, prefix="/google")
+app.include_router(students_router, prefix="/students")
+app.include_router(templates_router, prefix="/templates")
+app.include_router(payment_router, prefix="/payment")
+app.include_router(timetable_router, prefix="/timetable")
+app.include_router(agent_router, prefix="/agent")
