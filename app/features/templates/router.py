@@ -5,8 +5,10 @@ from pydantic import BaseModel
 
 from app.auth import require_internal_secret
 from app.shared.db import get_supabase
+from app.shared.schema import CamelResponse
+from fastapi.responses import JSONResponse
 
-router = APIRouter(dependencies=[Depends(require_internal_secret)])
+router = APIRouter(dependencies=[Depends(require_internal_secret)], default_response_class=CamelResponse)
 
 
 class TemplateUpdatePayload(BaseModel):
@@ -17,7 +19,7 @@ class TemplateUpdatePayload(BaseModel):
 async def list_templates():
     supabase = await get_supabase()
     result = await supabase.from_("templates").select("id, content").order("id").execute()
-    return result.data or []
+    return JSONResponse(content=result.data or [])
 
 
 @router.put("/{template_id}")

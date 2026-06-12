@@ -1,9 +1,11 @@
 import asyncio
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 
 from app.auth import require_internal_secret
+from app.shared.schema import CamelResponse
 from app.features.google.auth import (
     build_google_auth_url,
     exchange_code_for_refresh_token,
@@ -26,7 +28,7 @@ from app.features.google.sync import sync_all_students
 from app.shared.db import get_supabase
 from app.types import ClassSlot
 
-router = APIRouter(dependencies=[Depends(require_internal_secret)])
+router = APIRouter(dependencies=[Depends(require_internal_secret)], default_response_class=CamelResponse)
 
 
 # ---------------------------------------------------------------------------
@@ -81,22 +83,21 @@ def _friendly_google_error(raw: str) -> str:
 async def google_auth_url():
     state = generate_state_token()
     url = build_google_auth_url(state)
-    return {"url": url, "state": state}
+    return RedirectResponse(url=url, status_code=302)
 
 
-class CallbackRequest(BaseModel):
-    code: str
-    state: str
-
-
-@router.post("/callback")
-async def google_callback(body: CallbackRequest, supabase=Depends(get_supabase)):
+@router.get("/callback")
+async def google_callback(
+    code: str = Query(...),
+    state: str = Query(...),
+    supabase=Depends(get_supabase),
+):
     try:
-        verify_and_consume_state(body.state)
+        verify_and_consume_state(state)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     try:
-        refresh_token = await exchange_code_for_refresh_token(body.code)
+        refresh_token = await exchange_code_for_refresh_token(code)
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -115,7 +116,11 @@ async def create_class_event(body: CreateClassEventRequest):
         creds, stored_token = await get_oauth2_credentials(supabase)
         result = await create_weekly_class_events(creds, body.name, body.class_schedule)
         await save_token_if_rotated(creds, stored_token, supabase)
-        return result
+        return {
+            "meet_link": result["meet_link"],
+            "event_count": result["event_count"],
+            "event_ids": result["event_ids"],
+        }
     except Exception as exc:
         raise HTTPException(status_code=500, detail=_friendly_google_error(str(exc))) from exc
 

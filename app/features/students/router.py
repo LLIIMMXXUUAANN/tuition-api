@@ -5,9 +5,11 @@ from __future__ import annotations
 import asyncio
 
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from app.auth import require_internal_secret
+from app.shared.schema import CamelResponse
 from app.features.google.auth import get_oauth2_credentials, save_token_if_rotated
 from app.features.google.calendar import (
     create_weekly_class_events,
@@ -19,11 +21,11 @@ from app.features.google.drive import create_student_drive_folder, update_studen
 from app.shared.db import get_supabase
 from app.types import ClassSlot
 
-router = APIRouter(dependencies=[Depends(require_internal_secret)])
+router = APIRouter(dependencies=[Depends(require_internal_secret)], default_response_class=CamelResponse)
 
 
 # ---------------------------------------------------------------------------
-# Pydantic models
+# Request models
 # ---------------------------------------------------------------------------
 
 
@@ -85,7 +87,7 @@ async def list_students(status: str | None = None):
     if status:
         query = query.eq("status", status)
     result = await query.execute()
-    return result.data or []
+    return JSONResponse(content=result.data or [])
 
 
 @router.get("/portal-lookup")
@@ -101,7 +103,7 @@ async def portal_lookup(email: str):
     )
     if not result.data:
         raise HTTPException(status_code=404, detail="Student not found")
-    return result.data
+    return JSONResponse(content=result.data)
 
 
 @router.get("/{student_id}")
@@ -116,7 +118,7 @@ async def get_student(student_id: str):
     )
     if not result.data:
         raise HTTPException(status_code=404, detail="Student not found")
-    return result.data
+    return JSONResponse(content=result.data)
 
 
 @router.post("", status_code=201)
@@ -288,16 +290,19 @@ async def delete_student(student_id: str):
     event_ids: list[str] = fetch.data.get("calendar_event_ids") or []
 
     # Clean up Google resources if any exist (non-fatal — errors are returned, not raised)
-    google_errors: dict = {}
+    drive_error: str | None = None
+    calendar_error: str | None = None
     if drive_url or event_ids:
         try:
             creds, stored_token = await get_oauth2_credentials(supabase)
-            google_errors = await delete_student_google(creds, drive_url, event_ids)
+            google_result = await delete_student_google(creds, drive_url, event_ids)
+            drive_error = google_result.get("drive_error")
+            calendar_error = google_result.get("calendar_error")
             await save_token_if_rotated(creds, stored_token, supabase)
         except Exception as exc:
-            google_errors = {"google_error": str(exc)}
+            drive_error = _google_err(exc)
 
     result = await supabase.from_("students").delete().eq("id", student_id).execute()
     if hasattr(result, "error") and result.error:
         raise HTTPException(status_code=400, detail=result.error.message)
-    return {"ok": True, **google_errors}
+    return {"ok": True, "drive_error": drive_error, "calendar_error": calendar_error}

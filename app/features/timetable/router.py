@@ -6,9 +6,10 @@ from pydantic import BaseModel, ConfigDict, Field
 from app.auth import require_internal_secret
 from app.features.timetable.service import BookedSlot, run_slot_generation
 from app.shared.db import get_supabase
+from app.shared.schema import CamelResponse
 from app.types import ClassSlot
 
-router = APIRouter(dependencies=[Depends(require_internal_secret)])
+router = APIRouter(dependencies=[Depends(require_internal_secret)], default_response_class=CamelResponse)
 
 
 # ---------------------------------------------------------------------------
