@@ -7,6 +7,7 @@ from google.auth.transport.requests import AuthorizedSession
 from google.oauth2.credentials import Credentials
 
 from app.config import settings
+from app.services.google.auth import _session
 from app.types import ClassSlot
 
 _DRIVE = "https://www.googleapis.com/drive/v3"
@@ -83,13 +84,6 @@ def parse_drive_folder_id(drive_folder_url: str) -> str:
     if not re.fullmatch(r"[a-zA-Z0-9_-]+", raw_id):
         raise ValueError("Invalid folder ID in Drive URL")
     return raw_id
-
-
-def _session(creds: Credentials) -> AuthorizedSession:
-    """Requests session that bypasses system proxy (avoids httplib2 SSL issues on Windows)."""
-    s = AuthorizedSession(creds)
-    s.trust_env = False
-    return s
 
 
 # ---------------------------------------------------------------------------

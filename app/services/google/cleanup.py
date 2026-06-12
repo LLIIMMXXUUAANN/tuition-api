@@ -5,7 +5,8 @@ from google.oauth2.credentials import Credentials
 
 from app.config import settings
 from app.services.google.calendar import _delete_event
-from app.services.google.drive import _session, _trash_file, parse_drive_folder_id
+from app.services.google.auth import _session
+from app.services.google.drive import _trash_file, parse_drive_folder_id
 
 
 async def delete_student_google(

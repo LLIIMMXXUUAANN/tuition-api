@@ -3,9 +3,17 @@ import time
 import urllib.parse
 
 import httpx
+from google.auth.transport.requests import AuthorizedSession
 from google.oauth2.credentials import Credentials
 
 from app.config import settings
+
+def _session(creds: Credentials) -> AuthorizedSession:
+    """Requests session that bypasses system proxy (avoids httplib2 SSL issues on Windows)."""
+    s = AuthorizedSession(creds)
+    s.trust_env = False
+    return s
+
 
 # --- OAuth state tokens (CSRF protection) ---
 

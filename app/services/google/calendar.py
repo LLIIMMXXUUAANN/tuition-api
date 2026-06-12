@@ -4,11 +4,11 @@ from datetime import datetime, timedelta
 from functools import partial
 
 import pytz
-import requests as _req
-from google.auth.transport.requests import AuthorizedSession
 from google.oauth2.credentials import Credentials
 
 from app.config import settings
+from app.lib.utils import DAY_INDEX, time_to_mins
+from app.services.google.auth import _session
 from app.types import ClassSlot
 
 BYDAY: dict[str, str] = {
@@ -23,24 +23,7 @@ BYDAY: dict[str, str] = {
 
 MYT = pytz.timezone("Asia/Kuala_Lumpur")
 
-JS_DAY_INDEX: dict[str, int] = {
-    "Sunday": 0,
-    "Monday": 1,
-    "Tuesday": 2,
-    "Wednesday": 3,
-    "Thursday": 4,
-    "Friday": 5,
-    "Saturday": 6,
-}
-
 _CAL = "https://www.googleapis.com/calendar/v3/calendars"
-
-
-def _session(creds: Credentials) -> AuthorizedSession:
-    """Requests session that bypasses system proxy (thread-safe, no httplib2 SSL issues)."""
-    s = AuthorizedSession(creds)
-    s.trust_env = False
-    return s
 
 
 def _js_weekday(dt: datetime) -> int:
@@ -55,20 +38,15 @@ def _format_naive(dt: datetime) -> str:
     return dt.strftime("%Y-%m-%dT%H:%M:%S")
 
 
-def _time_to_mins(t: str) -> int:
-    h, m = t.split(":")
-    return int(h) * 60 + int(m)
-
-
 def _slot_date_times(slot: ClassSlot) -> tuple[str, str]:
     now_myt = _now_in_myt()
     base = now_myt.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)
-    target_js_day = JS_DAY_INDEX[slot.day]
+    target_js_day = DAY_INDEX[slot.day]
     base_js_day = _js_weekday(base)
     days_until = (target_js_day - base_js_day + 7) % 7
     base = base + timedelta(days=days_until)
     sh, sm = (int(x) for x in slot.start.split(":"))
-    duration_mins = (_time_to_mins(slot.end) - _time_to_mins(slot.start) + 24 * 60) % (24 * 60)
+    duration_mins = (time_to_mins(slot.end) - time_to_mins(slot.start) + 24 * 60) % (24 * 60)
     start_dt = base.replace(hour=sh, minute=sm, second=0, microsecond=0)
     end_dt = start_dt + timedelta(minutes=duration_mins)
     return _format_naive(start_dt), _format_naive(end_dt)
