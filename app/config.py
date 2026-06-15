@@ -19,7 +19,7 @@ class Settings(BaseSettings):
     google_calendar_id: str
     google_lec_topic1_file_id: str = ""
 
-    langchain_tracing: bool = False
+    langsmith_tracing: bool = False
     langsmith_endpoint: str = ""
     langsmith_api_key: str = ""
     langsmith_project: str = "tuition-agent"

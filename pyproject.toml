@@ -23,6 +23,7 @@ dependencies = [
     "Pillow>=11.0",
     # Utils
     "pytz>=2024.1",
+    "python-dotenv>=1.0",
 ]
 
 [tool.uv]
