@@ -7,7 +7,13 @@ import asyncio
 from supabase import AsyncClient
 
 from app.features.agent.tools.shared import err_msg
-from app.features.timetable.service import BookedSlot, run_slot_generation
+from app.features.timetable.service import (
+    BookedSlot,
+    TimetableValidationError,
+    run_slot_generation,
+    save_buffer_mins as svc_save_buffer_mins,
+    save_rules as svc_save_rules,
+)
 from app.types import ClassSlot
 
 
@@ -27,22 +33,18 @@ async def get_timetable_settings(supabase: AsyncClient) -> dict:
 
 async def update_timetable_rules(supabase: AsyncClient, rules: str) -> dict:
     try:
-        await supabase.from_("settings").upsert(
-            {"key": "timetable_rules", "value": rules}, on_conflict="key"
-        ).execute()
+        await svc_save_rules(supabase, rules)
         return {"ok": True}
     except Exception as err:
         return {"error": err_msg(err)}
 
 
 async def update_buffer_mins(supabase: AsyncClient, buffer_mins: int) -> dict:
-    if buffer_mins < 0 or buffer_mins > 60:
-        return {"error": "buffer_mins must be 0–60"}
     try:
-        await supabase.from_("settings").upsert(
-            {"key": "timetable_buffer_mins", "value": str(buffer_mins)}, on_conflict="key"
-        ).execute()
+        await svc_save_buffer_mins(supabase, buffer_mins)
         return {"ok": True}
+    except TimetableValidationError as err:
+        return {"error": str(err)}
     except Exception as err:
         return {"error": err_msg(err)}
 

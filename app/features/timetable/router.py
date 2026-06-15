@@ -4,7 +4,13 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.auth import require_internal_secret
-from app.features.timetable.service import BookedSlot, run_slot_generation
+from app.features.timetable.service import (
+    BookedSlot,
+    TimetableValidationError,
+    run_slot_generation,
+    save_buffer_mins,
+    save_rules,
+)
 from app.shared.db import get_supabase
 from app.shared.schema import CamelResponse
 from app.types import ClassSlot
@@ -58,13 +64,8 @@ async def get_rules():
 
 @router.post("/rules")
 async def update_rules(body: UpdateRulesRequest):
-    if not isinstance(body.rules, str):
-        raise HTTPException(status_code=400, detail="rules must be a string")
-
     supabase = await get_supabase()
-    await supabase.from_("settings").upsert(
-        {"key": "timetable_rules", "value": body.rules}, on_conflict="key"
-    ).execute()
+    await save_rules(supabase, body.rules)
     return {"ok": True}
 
 
@@ -89,16 +90,11 @@ async def get_buffer_mins():
 
 @router.post("/buffer-mins")
 async def update_buffer_mins(body: UpdateBufferMinsRequest):
-    if body.buffer_mins < 0 or body.buffer_mins > 60:
-        raise HTTPException(
-            status_code=400, detail="buffer_mins must be between 0 and 60"
-        )
-
     supabase = await get_supabase()
-    await supabase.from_("settings").upsert(
-        {"key": "timetable_buffer_mins", "value": str(body.buffer_mins)},
-        on_conflict="key",
-    ).execute()
+    try:
+        await save_buffer_mins(supabase, body.buffer_mins)
+    except TimetableValidationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {"ok": True}
 
 

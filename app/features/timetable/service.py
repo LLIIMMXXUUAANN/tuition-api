@@ -5,11 +5,33 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from supabase import AsyncClient
+
 from app.shared.utils import DAYS, TIME_SLOTS, time_to_mins
 from app.types import SlotState
 
 if TYPE_CHECKING:
     from app.shared.gemini.slot_generation import ClassifiedSlot
+
+
+class TimetableValidationError(Exception):
+    pass
+
+
+async def save_rules(supabase: AsyncClient, rules: str) -> None:
+    """Persist timetable_rules to the settings table."""
+    await supabase.from_("settings").upsert(
+        {"key": "timetable_rules", "value": rules}, on_conflict="key"
+    ).execute()
+
+
+async def save_buffer_mins(supabase: AsyncClient, buffer_mins: int) -> None:
+    """Persist timetable_buffer_mins to the settings table. Raises TimetableValidationError if out of range."""
+    if buffer_mins < 0 or buffer_mins > 60:
+        raise TimetableValidationError("buffer_mins must be 0–60")
+    await supabase.from_("settings").upsert(
+        {"key": "timetable_buffer_mins", "value": str(buffer_mins)}, on_conflict="key"
+    ).execute()
 
 
 @dataclass(frozen=True)
