@@ -14,7 +14,6 @@ from app.features.timetable.service import (
     save_buffer_mins as svc_save_buffer_mins,
     save_rules as svc_save_rules,
 )
-from app.types import ClassSlot
 
 
 async def get_timetable_settings(supabase: AsyncClient) -> dict:
