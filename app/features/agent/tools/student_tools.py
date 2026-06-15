@@ -1,19 +1,21 @@
-"""Student tool implementations — port of src/features/agent/lib/tools/student-tools.ts."""
+"""Student tool implementations."""
 
 from __future__ import annotations
 
-import asyncio
 import datetime
 
 import pytz
 from supabase import AsyncClient
 
 from app.features.agent.tools.shared import err_msg
-from app.features.google.auth import get_oauth2_credentials, save_token_if_rotated
-from app.features.google.calendar import create_weekly_class_events, update_weekly_class_events
-from app.features.google.cleanup import delete_student_google
-from app.features.google.drive import create_student_drive_folder, update_student_meet_doc
 from app.features.google.sync import sync_all_students
+from app.features.google.auth import get_oauth2_credentials, save_token_if_rotated
+from app.features.students.service import (
+    StudentNotFoundError,
+    create_student as svc_create,
+    update_student as svc_update,
+    delete_student as svc_delete,
+)
 from app.shared.utils import get_weekday_dates, group_slots_by_day, time_to_mins
 from app.types import ClassSlot
 
@@ -121,38 +123,13 @@ async def list_students(supabase: AsyncClient, params: dict) -> dict:
 
 
 async def create_student(supabase: AsyncClient, params: dict) -> dict:
-    insert_data = {
-        "name": params["name"],
-        "mode": params["mode"],
-        "fee_per_hour": params["fee_per_hour"],
-        "payment_method": params.get("payment_method", "Monthly"),
-        "status": params.get("status", "Active"),
-        "class_schedule": params.get("class_schedule") or [],
-        "contact_person": params.get("contact_person"),
-        "contact_phone": params.get("contact_phone"),
-        "student_phone": params.get("student_phone"),
-        "today_homework": params.get("today_homework"),
-        "notes": params.get("notes"),
-        "latest_payment": params.get("latest_payment"),
-        "access_emails": params.get("access_emails") or [],
-        "google_meet_link": params.get("google_meet_link"),
-        "google_drive_link": params.get("google_drive_link"),
-    }
-
-    result = (
-        await supabase.from_("students")
-        .insert(insert_data)
-        .select("id, name")
-        .single()
-        .execute()
-    )
-    if hasattr(result, "error") and result.error:
-        return {"error": result.error.message}
-
-    suggest = bool(params.get("class_schedule"))
-    response: dict = {"student": result.data}
-    if suggest:
-        response["suggestGoogleSetup"] = True
+    try:
+        result = await svc_create(supabase, params)
+    except Exception as exc:
+        return {"error": err_msg(exc)}
+    response: dict = {"student": {"id": result["id"], "name": result["name"]}}
+    if result.get("google_warning"):
+        response["google_warning"] = result["google_warning"]
     return response
 
 
@@ -161,225 +138,31 @@ async def update_student(supabase: AsyncClient, id: str, fields: dict) -> dict:
     if not permitted:
         return {"error": "No valid fields to update"}
 
-    if "access_emails" in permitted:
-        permitted["access_emails"] = [e.strip().lower() for e in (permitted["access_emails"] or [])]
-
-    update_result = (
-        await supabase.from_("students")
-        .update(permitted)
-        .eq("id", id)
-        .execute()
-    )
-    if hasattr(update_result, "error") and update_result.error:
-        return {"error": update_result.error.message}
-
-    if "class_schedule" not in permitted:
-        return {"success": True}
-
-    # Fetch Google integration fields to check if sync is needed
-    fetch_result = (
-        await supabase.from_("students")
-        .select("name, calendar_event_ids, google_meet_link, google_drive_link")
-        .eq("id", id)
-        .maybe_single()
-        .execute()
-    )
-    student = fetch_result.data if fetch_result and fetch_result.data else None
-
-    if not student or not student.get("calendar_event_ids") or not student.get("google_meet_link"):
-        return {"success": True, "suggestGoogleSetup": True}
-
     try:
-        creds, stored_token = await get_oauth2_credentials(supabase)
-    except Exception as err:
-        return {
-            "success": True,
-            "googleWarnings": [f"Schedule saved but Calendar not updated: {err_msg(err, 'Google not connected')}"],
-        }
+        result = await svc_update(supabase, id, permitted)
+    except StudentNotFoundError:
+        return {"error": "Student not found"}
+    except Exception as exc:
+        return {"error": err_msg(exc)}
 
-    warnings: list[str] = []
-    new_schedule = [ClassSlot(**s) for s in (permitted["class_schedule"] or [])]
-
-    cal_task = update_weekly_class_events(
-        creds,
-        student["name"],
-        new_schedule,
-        student["calendar_event_ids"],
-        student["google_meet_link"],
-    )
-    drive_link = student.get("google_drive_link")
-    drive_task = (
-        update_student_meet_doc(
-            creds,
-            drive_link,
-            student["name"],
-            new_schedule,
-            student["google_meet_link"],
-        )
-        if drive_link
-        else asyncio.sleep(0)
-    )
-
-    cal_result, drive_result = await asyncio.gather(cal_task, drive_task, return_exceptions=True)
-
-    if isinstance(cal_result, Exception):
-        warnings.append(f"Calendar update failed: {err_msg(cal_result)}")
-    else:
-        new_event_ids = cal_result["event_ids"]  # type: ignore[index]
-        new_meet_link: str | None = cal_result.get("meet_link")  # type: ignore[union-attr]
-
-        db_update: dict = {"calendar_event_ids": new_event_ids}
-        if new_meet_link:
-            db_update["google_meet_link"] = new_meet_link
-        db_save = await supabase.from_("students").update(db_update).eq("id", id).execute()
-        if hasattr(db_save, "error") and db_save.error:
-            warnings.append(f"Calendar updated but DB save failed: {db_save.error.message}")
-
-        if new_meet_link and drive_link:
-            try:
-                await update_student_meet_doc(
-                    creds, drive_link, student["name"], new_schedule, new_meet_link
-                )
-            except Exception as err:
-                warnings.append(f"Drive Meet doc update failed: {err_msg(err)}")
-
-    new_meet_link_generated = not isinstance(cal_result, Exception) and bool(
-        cal_result.get("meet_link")  # type: ignore[union-attr]
-    )
-    if isinstance(drive_result, Exception) and not new_meet_link_generated:
-        warnings.append(f"Drive Meet doc update failed: {err_msg(drive_result)}")
-
-    await save_token_if_rotated(creds, stored_token, supabase)
     response: dict = {"success": True}
-    if warnings:
-        response["googleWarnings"] = warnings
+    if result.get("google_warning"):
+        response["googleWarnings"] = [result["google_warning"]]
     return response
 
 
 async def delete_student(supabase: AsyncClient, id: str) -> dict:
-    fetch_result = (
-        await supabase.from_("students")
-        .select("google_drive_link, calendar_event_ids")
-        .eq("id", id)
-        .maybe_single()
-        .execute()
-    )
-    student = fetch_result.data if fetch_result and fetch_result.data else None
-
-    warnings: list[str] = []
-
-    if student and (student.get("google_drive_link") or student.get("calendar_event_ids")):
-        try:
-            creds, stored_token = await get_oauth2_credentials(supabase)
-            google_result = await delete_student_google(
-                creds,
-                student.get("google_drive_link"),
-                student.get("calendar_event_ids"),
-            )
-            await save_token_if_rotated(creds, stored_token, supabase)
-            if google_result.get("drive_error"):
-                warnings.append(f"Drive cleanup warning: {google_result['drive_error']}")
-            if google_result.get("calendar_error"):
-                warnings.append(f"Calendar cleanup warning: {google_result['calendar_error']}")
-        except Exception as err:
-            warnings.append(f"Google cleanup skipped: {err_msg(err, 'auth error')}")
-
-    delete_result = (
-        await supabase.from_("students")
-        .delete()
-        .eq("id", id)
-        .execute()
-    )
-    if hasattr(delete_result, "error") and delete_result.error:
-        return {"error": delete_result.error.message}
+    try:
+        result = await svc_delete(supabase, id)
+    except StudentNotFoundError:
+        return {"error": "Student not found"}
+    except Exception as exc:
+        return {"error": err_msg(exc)}
 
     response: dict = {"success": True}
-    if warnings:
-        response["warnings"] = warnings
+    if result.get("google_warning"):
+        response["warnings"] = [result["google_warning"]]
     return response
-
-
-async def setup_student_google(supabase: AsyncClient, student_id: str) -> dict:
-    fetch_result = (
-        await supabase.from_("students")
-        .select("name, mode, class_schedule, calendar_event_ids, google_meet_link, google_drive_link")
-        .eq("id", student_id)
-        .single()
-        .execute()
-    )
-    if fetch_result is None or (hasattr(fetch_result, "error") and fetch_result.error) or not fetch_result.data:
-        return {"error": "Student not found"}
-
-    student = fetch_result.data
-    name = student["name"]
-    mode = student["mode"]
-    class_schedule = student.get("class_schedule") or []
-    calendar_event_ids = student.get("calendar_event_ids") or []
-    google_meet_link: str | None = student.get("google_meet_link")
-    google_drive_link: str | None = student.get("google_drive_link")
-
-    if not class_schedule:
-        return {"error": "Student has no class schedule — add a schedule before setting up Google."}
-
-    needs_calendar = not calendar_event_ids
-    needs_drive = not google_drive_link
-
-    if not needs_calendar and not needs_drive:
-        return {"result": "Already fully set up — Calendar ✓, Drive ✓. Nothing to do."}
-
-    try:
-        creds, stored_token = await get_oauth2_credentials(supabase)
-    except Exception as err:
-        return {"error": err_msg(err, "Google not connected")}
-
-    summary: list[str] = []
-    slots = [ClassSlot(**s) for s in class_schedule]
-
-    if needs_calendar:
-        try:
-            cal_result = await create_weekly_class_events(creds, name, slots)
-            meet_link = cal_result["meet_link"]
-            event_ids = cal_result["event_ids"]
-            cal_save = (
-                await supabase.from_("students")
-                .update({"google_meet_link": meet_link, "calendar_event_ids": event_ids})
-                .eq("id", student_id)
-                .execute()
-            )
-            if hasattr(cal_save, "error") and cal_save.error:
-                return {"error": f"Calendar events created but DB save failed: {cal_save.error.message}"}
-            google_meet_link = meet_link
-            count = len(event_ids)
-            summary.append(f"Calendar ✓ ({count} event{'s' if count != 1 else ''} created, Meet link saved)")
-        except Exception as err:
-            return {"error": f"Calendar setup failed: {err_msg(err)}"}
-    else:
-        summary.append("Calendar ✓ (already set up, skipped)")
-
-    if needs_drive:
-        if not google_meet_link:
-            return {"error": "No Meet link available — Calendar setup must succeed before Drive can be created."}
-        try:
-            drive_url = await create_student_drive_folder(
-                creds, name, google_meet_link, slots, mode
-            )
-            drive_save = (
-                await supabase.from_("students")
-                .update({"google_drive_link": drive_url})
-                .eq("id", student_id)
-                .execute()
-            )
-            if hasattr(drive_save, "error") and drive_save.error:
-                summary.append(f"Drive ✗ (folder created but DB save failed: {drive_save.error.message})")
-            else:
-                summary.append("Drive ✓ (folder created)")
-        except Exception as err:
-            summary.append(f"Drive ✗ ({err_msg(err)})")
-    else:
-        summary.append("Drive ✓ (already set up, skipped)")
-
-    await save_token_if_rotated(creds, stored_token, supabase)
-    return {"result": ", ".join(summary)}
 
 
 async def run_sync_all(supabase: AsyncClient) -> dict:

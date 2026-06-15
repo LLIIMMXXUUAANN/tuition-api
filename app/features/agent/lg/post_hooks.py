@@ -18,7 +18,6 @@ STUDENT_MUTATIONS = {
     "create_student",
     "update_student",
     "delete_student",
-    "setup_student_google",
     "manage_portal_access",
 }
 TIMETABLE_MUTATIONS = {

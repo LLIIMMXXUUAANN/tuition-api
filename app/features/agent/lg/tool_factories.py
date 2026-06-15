@@ -23,7 +23,6 @@ from app.features.agent.tools.student_tools import (
     manage_portal_access,
     run_sync_all,
     search_students,
-    setup_student_google,
     update_student,
 )
 from app.features.agent.tools.template_tools import (
@@ -87,10 +86,6 @@ class StudentFieldsInput(BaseModel):
 
 class DeleteStudentInput(BaseModel):
     id: str = Field(description="Student UUID to permanently delete")
-
-
-class SetupStudentGoogleInput(BaseModel):
-    student_id: str = Field(description="Student UUID to set up Google Calendar and Drive for")
 
 
 class ManagePortalAccessInput(BaseModel):
@@ -171,7 +166,7 @@ class GenerateSlotAvailabilityInput(BaseModel):
 
 
 def make_student_tools(supabase) -> list[StructuredTool]:
-    """Return all 11 student tools bound to the given Supabase client."""
+    """Return all 10 student tools bound to the given Supabase client."""
 
     async def _search_students(query: str) -> dict:
         return await search_students(supabase, query)
@@ -231,9 +226,6 @@ def make_student_tools(supabase) -> list[StructuredTool]:
     async def _delete_student(id: str) -> dict:
         return await delete_student(supabase, id)
 
-    async def _setup_student_google(student_id: str) -> dict:
-        return await setup_student_google(supabase, student_id)
-
     async def _sync_all_students(reason: Optional[str] = None) -> dict:
         return await run_sync_all(supabase)
 
@@ -282,12 +274,6 @@ def make_student_tools(supabase) -> list[StructuredTool]:
             name="delete_student",
             description="Permanently delete a student record and clean up Google Calendar/Drive. Requires explicit confirmation.",
             args_schema=DeleteStudentInput,
-        ),
-        StructuredTool.from_function(
-            coroutine=_setup_student_google,
-            name="setup_student_google",
-            description="Create Google Calendar recurring events and Google Drive folder for a student. Requires class_schedule to be set.",
-            args_schema=SetupStudentGoogleInput,
         ),
         StructuredTool.from_function(
             coroutine=_sync_all_students,

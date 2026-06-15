@@ -44,7 +44,6 @@ from app.features.agent.tools import (
     manage_portal_access,
     run_sync_all,
     search_students,
-    setup_student_google,
     update_buffer_mins,
     update_student,
     update_timetable_rules,
@@ -58,7 +57,6 @@ router = APIRouter(dependencies=[Depends(require_internal_secret)], default_resp
 MUTATION_TOOLS = {
     "update_student",
     "delete_student",
-    "setup_student_google",
     "update_timetable_rules",
     "update_buffer_mins",
 }
@@ -135,8 +133,6 @@ async def execute_tool(name: str, args: dict, supabase) -> dict | list:
             return await update_student(supabase, args["id"], args["fields"])
         case "delete_student":
             return await delete_student(supabase, args["id"])
-        case "setup_student_google":
-            return await setup_student_google(supabase, args["student_id"])
         case "sync_all_students":
             return await run_sync_all(supabase)
         case "manage_portal_access":

@@ -38,23 +38,6 @@ async def self_eval(
             )
             return "✓ verified deleted" if not (result and result.data) else "_⚠ student still exists in DB_"
 
-        if tool_name == "setup_student_google":
-            result = (
-                await supabase.from_("students")
-                .select("google_meet_link, google_drive_link")
-                .eq("id", args["student_id"])
-                .maybe_single()
-                .execute()
-            )
-            if not (result and result.data):
-                return "⚠ could not verify"
-            data = result.data
-            parts = [
-                "✓ Meet link set" if data.get("google_meet_link") else "⚠ Meet link missing",
-                "✓ Drive folder set" if data.get("google_drive_link") else "⚠ Drive folder missing",
-            ]
-            return ", ".join(parts)
-
         if tool_name == "update_timetable_rules":
             result = (
                 await supabase.from_("settings")

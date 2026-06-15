@@ -7,7 +7,7 @@ import datetime
 import pytz
 from supabase import AsyncClient
 
-from app.features.payment.service import PaymentStudentData, build_payment_message
+from app.features.payment.service import PaymentStudentData, PaymentValidationError, build_payment_message
 from app.features.templates.service import TEMPLATE_META, template_meta
 from app.types import ClassSlot
 
@@ -79,16 +79,16 @@ async def generate_payment_message(supabase: AsyncClient, params: dict) -> dict:
         fee_per_hour=student_data["fee_per_hour"],
     )
 
-    result = build_payment_message(
-        student=student,
-        month=resolved_month,
-        year=resolved_year,
-        template_type=template_type,
-        carryover=carryover,
-    )
-
-    if "error" in result:
-        return {"error": result["error"]}
+    try:
+        result = build_payment_message(
+            student=student,
+            month=resolved_month,
+            year=resolved_year,
+            template_type=template_type,
+            carryover=carryover,
+        )
+    except PaymentValidationError as exc:
+        return {"error": str(exc)}
 
     return {
         "message": result["message"],

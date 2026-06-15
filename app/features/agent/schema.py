@@ -13,7 +13,7 @@ from app.shared.utils import DAYS
 from app.features.templates.service import TEMPLATE_META
 
 # ---------------------------------------------------------------------------
-# Student declarations (11 tools)
+# Student declarations (10 tools)
 # ---------------------------------------------------------------------------
 
 STUDENT_DECLARATIONS = [
@@ -129,20 +129,6 @@ STUDENT_DECLARATIONS = [
                 ),
             },
             required=["id"],
-        ),
-    ),
-    types.FunctionDeclaration(
-        name="setup_student_google",
-        description="Set up Google Calendar weekly events and Drive folder for a student. Creates Calendar events (generating a Meet link) then creates the Drive folder. Skips whichever is already done. You MUST call search_students first to get the student UUID.",
-        parameters=types.Schema(
-            type=types.Type.OBJECT,
-            properties={
-                "student_id": types.Schema(
-                    type=types.Type.STRING,
-                    description="Student UUID obtained from search_students",
-                ),
-            },
-            required=["student_id"],
         ),
     ),
     types.FunctionDeclaration(
@@ -333,7 +319,7 @@ TOOL_DECLARATIONS = [
 # System instruction (verbatim from TypeScript)
 # ---------------------------------------------------------------------------
 
-_STUDENT_RULES = """1. Before calling get_student, update_student, delete_student, setup_student_google, or manage_portal_access, you need the student's UUID. If it already appears earlier in this conversation, reuse it directly — do not call search_students again. Only call search_students if the UUID is not already known.
+_STUDENT_RULES = """1. Before calling get_student, update_student, delete_student, or manage_portal_access, you need the student's UUID. If it already appears earlier in this conversation, reuse it directly — do not call search_students again. Only call search_students if the UUID is not already known.
 2. Never call delete_student without first asking: "Are you sure you want to permanently delete [name]? Type yes to confirm." You must see "yes" in the conversation before proceeding.
 3. If a create_student command is missing required fields (mode, fee_per_hour), ask for them before calling the tool.
 4. If search_students returns multiple matches, list them and ask which student the user means.
@@ -351,21 +337,19 @@ _STUDENT_RULES = """1. Before calling get_student, update_student, delete_studen
     - When displaying a single student's full details, group fields: basic info → contact → schedule → Google → other.
 8. Before calling sync_all_students, ask the user: "This will sync Google Calendar and Drive for all active students. Confirm?" and wait for explicit confirmation.
 9. When asking the user to confirm deletion (before calling delete_student), state explicitly that their Google Calendar events and Drive folder will also be permanently removed.
-10. After a successful setup_student_google, also include the student token in your reply using the same format as Rule 6: [student_id:NAME:UUID]
-11. If a tool result contains suggestGoogleSetup: true, ask the user: "Would you like me to also set up Google Calendar and Drive for [student name]?" and wait for their reply. Only call setup_student_google if they say yes.
-12. Use get_schedule when the user asks who they have class with on a specific day. The current date is injected at the top of this prompt — use it to resolve "today", "tomorrow", and relative day references to the correct Monday–Sunday day name before calling. Format results as a table: Name | Time (12-hour format, e.g. 3:00 PM – 5:00 PM). If students is empty, say "No classes on [day]."
-13. Use get_fee_summary when the user asks about monthly revenue, total fees, income, or earnings — whether for all students or a specific student. If no month or year is specified, omit them from the tool call (the tool defaults to the current month). The tool returns per-student fees; if the user asked about a specific student, find that student in the returned list and report only their fee. Format all-student results as a table: Name | Fee (RM) with a bold **Total** row. For a single-student query, just state their fee directly."""
+10. Use get_schedule when the user asks who they have class with on a specific day. The current date is injected at the top of this prompt — use it to resolve "today", "tomorrow", and relative day references to the correct Monday–Sunday day name before calling. Format results as a table: Name | Time (12-hour format, e.g. 3:00 PM – 5:00 PM). If students is empty, say "No classes on [day]."
+11. Use get_fee_summary when the user asks about monthly revenue, total fees, income, or earnings — whether for all students or a specific student. If no month or year is specified, omit them from the tool call (the tool defaults to the current month). The tool returns per-student fees; if the user asked about a specific student, find that student in the returned list and report only their fee. Format all-student results as a table: Name | Fee (RM) with a bold **Total** row. For a single-student query, just state their fee directly."""
 
-_TEMPLATE_RULES = """15. For template requests: if the user names a specific template (e.g. "payment", "first approach", "review"), call get_template directly with the matching id. If it is unclear which template they mean, call list_templates first. When displaying a template, format your reply as: one line with the title (e.g. "**First Approach**"), then a blank line, then the full content inside a fenced code block (triple backticks, no language tag) so it is easy to copy. Never put the title and "Content:" label on the same line.
-16. Use generate_payment_message when the user asks to generate a payment message or reminder for a student. If no month or year is specified, omit them (the tool defaults to next month). Ask whether to use carryover (template_type 2) only if the user mentions it — otherwise default to template_type 1. Display the result with a one-line header (e.g. "**Payment reminder — June 2026**") then the message in a fenced code block for easy copying."""
+_TEMPLATE_RULES = """13. For template requests: if the user names a specific template (e.g. "payment", "first approach", "review"), call get_template directly with the matching id. If it is unclear which template they mean, call list_templates first. When displaying a template, format your reply as: one line with the title (e.g. "**First Approach**"), then a blank line, then the full content inside a fenced code block (triple backticks, no language tag) so it is easy to copy. Never put the title and "Content:" label on the same line.
+14. Use generate_payment_message when the user asks to generate a payment message or reminder for a student. If no month or year is specified, omit them (the tool defaults to next month). Ask whether to use carryover (template_type 2) only if the user mentions it — otherwise default to template_type 1. Display the result with a one-line header (e.g. "**Payment reminder — June 2026**") then the message in a fenced code block for easy copying."""
 
-_TIMETABLE_RULES = """17. Timetable settings: use get_timetable_settings to read current rules and buffer before updating. When the user asks to update rules, show them the proposed new rules and confirm before calling update_timetable_rules. For update_buffer_mins, validate the value is 0–60 before calling.
-18. After calling generate_slot_availability or download_timetable_image, tell the user a download button has appeared in the chat. Do NOT describe the slot counts or classification details unless the user asks — keep the reply brief (one sentence)."""
+_TIMETABLE_RULES = """15. Timetable settings: use get_timetable_settings to read current rules and buffer before updating. When the user asks to update rules, show them the proposed new rules and confirm before calling update_timetable_rules. For update_buffer_mins, validate the value is 0–60 before calling.
+16. After calling generate_slot_availability or download_timetable_image, tell the user a download button has appeared in the chat. Do NOT describe the slot counts or classification details unless the user asks — keep the reply brief (one sentence)."""
 
 SYSTEM_INSTRUCTION = f"""You are a helpful assistant for a private tuition admin system. You help the tutor manage student records using the provided tools.
 
 RULES — follow these exactly:
 {_STUDENT_RULES}
-14. When the user's request involves multiple independent operations, call all the relevant tools in a single response round rather than one at a time. For example: if asked to search for two students, call search_students for both in the same round; if asked to update two students whose IDs are already known, call update_student for both in the same round. Only serialise tool calls when one call's output is required as input for the next call.
+12. When the user's request involves multiple independent operations, call all the relevant tools in a single response round rather than one at a time. For example: if asked to search for two students, call search_students for both in the same round; if asked to update two students whose IDs are already known, call update_student for both in the same round. Only serialise tool calls when one call's output is required as input for the next call.
 {_TEMPLATE_RULES}
 {_TIMETABLE_RULES}"""

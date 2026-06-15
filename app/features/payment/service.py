@@ -4,6 +4,10 @@ from dataclasses import dataclass
 from typing import Any
 
 from app.types import ClassSlot
+
+
+class PaymentValidationError(Exception):
+    pass
 from app.shared.utils import (
     MONTH_NAMES,
     format_fee,
@@ -30,7 +34,10 @@ def build_payment_message(
     template_type: int,  # 1 or 2
     carryover: float = 0,
 ) -> dict[str, Any]:
-    """Return {"message": str, "month_name": str} or {"error": str}."""
+    """Return {"message": str, "month_name": str}.
+
+    Raises PaymentValidationError if the student has no scheduled class days.
+    """
 
     slots_by_day = group_slots_by_day(student.class_schedule)
 
@@ -48,7 +55,7 @@ def build_payment_message(
     all_dates.sort()
 
     if not all_dates:
-        return {"error": "No scheduled class days found for this student"}
+        raise PaymentValidationError("No scheduled class days found for this student")
 
     session_count = len(all_dates)
     month_name = MONTH_NAMES[month - 1]

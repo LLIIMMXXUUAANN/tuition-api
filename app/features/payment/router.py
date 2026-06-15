@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.auth import require_internal_secret
-from app.features.payment.service import PaymentStudentData, build_payment_message
+from app.features.payment.service import PaymentStudentData, PaymentValidationError, build_payment_message
 from app.shared.db import get_supabase
 from app.shared.schema import CamelResponse
 from app.types import ClassSlot
@@ -63,15 +63,15 @@ async def generate_payment(body: GeneratePaymentRequest):
         fee_per_hour=float(student_data["fee_per_hour"]),
     )
 
-    outcome = build_payment_message(
-        student=student,
-        month=body.month,
-        year=body.year,
-        template_type=body.template_type,
-        carryover=body.carryover,
-    )
-
-    if "error" in outcome:
-        raise HTTPException(status_code=400, detail=outcome["error"])
+    try:
+        outcome = build_payment_message(
+            student=student,
+            month=body.month,
+            year=body.year,
+            template_type=body.template_type,
+            carryover=body.carryover,
+        )
+    except PaymentValidationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
 
     return {"message": outcome["message"]}
