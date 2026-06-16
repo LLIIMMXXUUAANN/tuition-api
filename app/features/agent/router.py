@@ -282,11 +282,11 @@ async def agent_chat(request: Request):
                     ))
 
                     # Track mutations
-                    if fc.name == "create_student" and isinstance(result, dict) and "student" in result:
+                    if fc.name == "create_student" and isinstance(result, dict) and result.get("id"):
                         last_mutation_tool = {
                             "name": fc.name,
                             "args": dict(fc.args or {}),
-                            "created_id": result["student"]["id"],
+                            "created_id": result["id"],
                         }
                     elif fc.name in MUTATION_TOOLS:
                         last_mutation_tool = {"name": fc.name, "args": dict(fc.args or {})}

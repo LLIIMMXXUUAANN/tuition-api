@@ -55,7 +55,7 @@ STUDENT_DECLARATIONS = [
     ),
     types.FunctionDeclaration(
         name="create_student",
-        description="Create a new student record in the database.",
+        description="Create a new student record in the database. Returns {id, name, google_warning?} on success.",
         parameters=types.Schema(
             type=types.Type.OBJECT,
             properties={

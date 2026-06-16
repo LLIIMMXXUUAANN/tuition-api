@@ -63,7 +63,7 @@ def _find_created_id(messages: list, tool_call_id: str | None) -> str | None:
         content = m.content if isinstance(m.content, str) else json.dumps(m.content)
         try:
             parsed = json.loads(content)
-            return parsed.get("student", {}).get("id")
+            return parsed.get("id")
         except Exception:
             return None
     return None

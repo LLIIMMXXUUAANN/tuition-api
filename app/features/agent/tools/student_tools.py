@@ -127,7 +127,7 @@ async def create_student(supabase: AsyncClient, params: dict) -> dict:
         result = await svc_create(supabase, params)
     except Exception as exc:
         return {"error": err_msg(exc)}
-    response: dict = {"student": {"id": result["id"], "name": result["name"]}}
+    response: dict = {"id": result["id"], "name": result["name"]}
     if result.get("google_warning"):
         response["google_warning"] = result["google_warning"]
     return response
