@@ -11,7 +11,7 @@ def get_gemini_chat_model() -> ChatGoogleGenerativeAI:
     """Fresh instance per call — parallel subagents must not share a model instance.
 
     thinking_budget=0 disables Gemini 2.5 Flash's thinking pass which exhausts
-    token budget on large tool schemas (11 tools) and returns empty response.
+    token budget on large tool schemas (10 tools) and returns empty response.
     """
     try:
         return ChatGoogleGenerativeAI(
