@@ -199,7 +199,6 @@ async def agent_chat(request: Request):
                 contents.append(types.Content(role=role, parts=[types.Part(text=m["content"])]))
 
         got_reply = False
-        last_mutation_tool: dict | None = None
 
         try:
             for _round in range(10):
@@ -209,7 +208,7 @@ async def agent_chat(request: Request):
                 round_text = ""
                 round_fn_calls: list = []
 
-                async for chunk in gemini_client.aio.models.generate_content_stream(
+                async for chunk in await gemini_client.aio.models.generate_content_stream(
                     model="gemini-2.5-flash",
                     contents=contents,
                     config=types.GenerateContentConfig(
@@ -281,16 +280,6 @@ async def agent_chat(request: Request):
                         )
                     ))
 
-                    # Track mutations
-                    if fc.name == "create_student" and isinstance(result, dict) and result.get("id"):
-                        last_mutation_tool = {
-                            "name": fc.name,
-                            "args": dict(fc.args or {}),
-                            "created_id": result["id"],
-                        }
-                    elif fc.name in MUTATION_TOOLS:
-                        last_mutation_tool = {"name": fc.name, "args": dict(fc.args or {})}
-
                     # Special SSE events
                     if fc.name == "download_timetable_image" and isinstance(result, dict) and "students" in result:
                         yield {"data": json.dumps({"type": "download_schedule", "students": result["students"]})}
@@ -298,6 +287,23 @@ async def agent_chat(request: Request):
                         yield {"data": json.dumps({"type": "slots_ready", "slots": result["slots"]})}
 
                 contents.append(types.Content(role="user", parts=fn_response_parts))
+
+                # Verify all mutations from this round in parallel
+                round_mutations = []
+                for i, fc in enumerate(named_calls):
+                    result = tool_results[i]
+                    if fc.name == "create_student" and isinstance(result, dict) and result.get("id"):
+                        round_mutations.append({"name": fc.name, "args": dict(fc.args or {}), "created_id": result["id"]})
+                    elif fc.name in MUTATION_TOOLS:
+                        round_mutations.append({"name": fc.name, "args": dict(fc.args or {})})
+                if round_mutations:
+                    verdicts = await asyncio.gather(*[
+                        self_eval(m["name"], m["args"], supabase, m.get("created_id"))
+                        for m in round_mutations
+                    ])
+                    for verdict in verdicts:
+                        if verdict:
+                            yield {"data": json.dumps({"type": "step", "content": verdict})}
 
         except Exception as e:
             if request_id:
@@ -309,17 +315,6 @@ async def agent_chat(request: Request):
 
         if not got_reply and not was_stopped:
             yield {"data": json.dumps({"type": "chunk", "content": "I wasn't able to complete that in the allowed steps — please try a simpler request."})}
-
-        # Self-eval always runs after mutations (even when stopped, so user sees confirmation)
-        if last_mutation_tool:
-            verification = await self_eval(
-                last_mutation_tool["name"],
-                last_mutation_tool["args"],
-                supabase,
-                last_mutation_tool.get("created_id"),
-            )
-            if verification:
-                yield {"data": json.dumps({"type": "step", "content": verification})}
 
         if not was_stopped:
             history_dicts = [_content_to_dict(c) for c in contents]

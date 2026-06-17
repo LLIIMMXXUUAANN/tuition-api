@@ -5,6 +5,7 @@ Port of src/features/agent/lib/lg/post-hooks.ts.
 
 from __future__ import annotations
 
+import asyncio
 import json
 
 from langchain_core.messages import AIMessage, AIMessageChunk, SystemMessage, ToolMessage
@@ -26,31 +27,29 @@ TIMETABLE_MUTATIONS = {
 }
 
 
-def _find_last_mutation_call(messages: list, mutation_set: set) -> dict | None:
-    """Find the last mutation tool call, only searching after the last self_eval message
-    to avoid re-verifying prior mutations when the subagent makes more calls."""
-    search_from = len(messages) - 1
-
-    # Find the last self_eval SystemMessage to limit the search window
+def _find_round_mutation_calls(messages: list, mutation_set: set) -> list[dict]:
+    """Find ALL mutation tool calls from the most recent tool-calling round,
+    only searching messages AFTER the last self_eval message."""
+    last_self_eval_idx = -1
     for i in range(len(messages) - 1, -1, -1):
         m = messages[i]
         if isinstance(m, SystemMessage) and getattr(m, "name", None) == SELF_EVAL_MESSAGE_NAME:
-            search_from = i - 1
+            last_self_eval_idx = i
             break
 
-    for i in range(search_from, -1, -1):
+    # range stops before last_self_eval_idx so we never re-examine prior rounds
+    for i in range(len(messages) - 1, last_self_eval_idx, -1):
         m = messages[i]
         if not isinstance(m, (AIMessage, AIMessageChunk)):
             continue
         tool_calls = getattr(m, "tool_calls", None) or []
-        call = next((tc for tc in tool_calls if tc.get("name") in mutation_set), None)
-        if call:
-            return {
-                "name": call["name"],
-                "args": call.get("args") or {},
-                "tool_call_id": call.get("id"),
-            }
-    return None
+        mutations = [tc for tc in tool_calls if tc.get("name") in mutation_set]
+        if mutations:
+            return [
+                {"name": tc["name"], "args": tc.get("args") or {}, "tool_call_id": tc.get("id")}
+                for tc in mutations
+            ]
+    return []
 
 
 def _find_created_id(messages: list, tool_call_id: str | None) -> str | None:
@@ -74,23 +73,21 @@ def _make_post_hook(supabase, mutation_set: set):
 
     async def post_hook(state: MessagesState) -> dict:
         messages = state["messages"]
-        last = _find_last_mutation_call(messages, mutation_set)
-        if not last:
+        mutations = _find_round_mutation_calls(messages, mutation_set)
+        if not mutations:
             return {}
 
-        created_id = None
-        if last["name"] == "create_student":
-            created_id = _find_created_id(messages, last.get("tool_call_id"))
-
-        verdict = await self_eval(last["name"], last["args"], supabase, created_id)
-        if not verdict:
+        verdicts = await asyncio.gather(*[
+            self_eval(
+                m["name"], m["args"], supabase,
+                _find_created_id(messages, m.get("tool_call_id")) if m["name"] == "create_student" else None,
+            )
+            for m in mutations
+        ])
+        combined = "  \n".join(v for v in verdicts if v)
+        if not combined:
             return {}
-
-        return {
-            "messages": [
-                SystemMessage(content=verdict, name=SELF_EVAL_MESSAGE_NAME)
-            ]
-        }
+        return {"messages": [SystemMessage(content=combined, name=SELF_EVAL_MESSAGE_NAME)]}
 
     return post_hook
 

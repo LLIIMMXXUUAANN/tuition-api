@@ -37,7 +37,7 @@ Server starts at `http://127.0.0.1:8000`. API docs at `http://127.0.0.1:8000/doc
 | `GOOGLE_CALENDAR_ID` | Google Calendar ID for class events |
 | `GOOGLE_LEC_TOPIC1_FILE_ID` | Drive file ID for Topic 1 shortcut (My Python Syllabus students only) |
 | `ALLOWED_ORIGINS` | Comma-separated CORS origins (e.g. `http://localhost:3000`) |
-| `LANGCHAIN_TRACING` | `true` to enable LangSmith tracing (optional) |
+| `LANGSMITH_TRACING` | `true` to enable LangSmith tracing (optional) |
 | `LANGSMITH_ENDPOINT` | LangSmith API endpoint |
 | `LANGSMITH_API_KEY` | LangSmith API key |
 | `LANGSMITH_PROJECT` | LangSmith project name (default: `tuition-agent`) |
@@ -73,50 +73,82 @@ app/
   config.py            → Pydantic Settings (loaded from .env)
   auth.py              → require_internal_secret dependency
   types.py             → ClassSlot, Student, enums (StudentMode, StudentStatus, SlotState…)
-  routers/
-    google.py          → Calendar/Drive CRUD + OAuth setup (all routes protected)
-    students.py        → Student CRUD + portal lookup
-    payment.py         → Payment message generation
-    timetable.py       → Timetable rules + buffer + slot generation
-    agent.py           → AI agent SSE — classic Gemini loop + LangGraph
-    templates.py       → Message template read/update
-  services/
-    supabase_client.py → Async Supabase singleton (get_supabase)
+  features/
     google/
+      router.py        → Calendar/Drive CRUD + OAuth setup routes
       auth.py          → OAuth credentials, CSRF state tokens, token rotation
       calendar.py      → Recurring Calendar events (create / find / update)
       drive.py         → Student Drive folders + Meet docs
       cleanup.py       → Bulk delete on student removal
       sync.py          → Full sync for all active students
+    students/
+      router.py        → Student CRUD + portal lookup routes
+      service.py       → StudentNotFoundError, create_student, update_student, delete_student
+    payment/
+      router.py        → Payment message generation route
+      service.py       → build_payment_message wrapper
+    timetable/
+      router.py        → Timetable rules + buffer + slot generation routes
+      service.py       → TimetableValidationError, save_rules, save_buffer_mins
+    templates/
+      router.py        → Message template read/update routes
+      service.py       → TEMPLATE_META, template_meta(), get_template
+    agent/
+      router.py        → AI agent SSE — classic Gemini loop + LangGraph
+      schema.py        → TOOL_DECLARATIONS (19 tools) + SYSTEM_INSTRUCTION
+      eval.py          → self_eval — post-mutation DB verification (see Design decisions)
+      state.py         → stop_signals dict (keyed by request_id)
+      tools/
+        shared.py        → err_msg helper, SupabaseClient type alias
+        student_tools.py → 11 student + Google + portal tools
+        template_tools.py → 3 template + payment-message tools
+        timetable_tools.py → 5 timetable + slot-generation tools
+      lg/
+        model.py         → get_gemini_chat_model (fresh ChatGoogle per call)
+        handoff.py       → HandoffTask, create_dispatch_tool
+        subagent.py      → build_subagent (ReAct graph: agent → tools → post_hook → agent)
+        tool_factories.py → make_student_tools / make_template_tools / make_timetable_tools
+        student_agent.py → make_student_agent
+        template_agent.py → make_template_agent
+        timetable_agent.py → make_timetable_agent
+        supervisor.py    → make_supervisor, build_custom_supervisor
+        post_hooks.py    → make_student_post_hook, make_timetable_post_hook
+        stream_adapter.py → pipe_langgraph_stream, is_routing_relevant
+  shared/
+    db.py              → Async Supabase singleton (get_supabase)
+    utils.py           → DAYS, TIME_SLOTS, time_to_mins, format_fee, get_weekday_dates…
+    schema.py          → CamelResponse shared response class
     gemini/
       client.py        → Singleton google.genai.Client
       slot_generation.py → run_gemini_slot_generation (structured JSON output)
-  agent/
-    schema.py          → TOOL_DECLARATIONS (19 tools) + SYSTEM_INSTRUCTION
-    eval.py            → self_eval — post-mutation DB verification
-    state.py           → stop_signals dict (keyed by request_id)
-    tools/
-      shared.py        → err_msg helper, SupabaseClient type alias
-      student_tools.py → 11 student + Google + portal tools
-      template_tools.py → 3 template + payment-message tools
-      timetable_tools.py → 5 timetable + slot-generation tools
-    lg/
-      model.py         → get_gemini_chat_model (fresh ChatGoogle per call)
-      handoff.py       → HandoffTask, create_dispatch_tool
-      subagent.py      → build_subagent (ReAct graph: agent → tools → post_hook → agent)
-      tool_factories.py → make_student_tools / make_template_tools / make_timetable_tools
-      student_agent.py → make_student_agent
-      template_agent.py → make_template_agent
-      timetable_agent.py → make_timetable_agent
-      supervisor.py    → make_supervisor, build_custom_supervisor
-      post_hooks.py    → make_student_post_hook, make_timetable_post_hook
-      stream_adapter.py → pipe_langgraph_stream, is_routing_relevant
-  lib/
-    utils.py           → DAYS, TIME_SLOTS, time_to_mins, format_fee, get_weekday_dates…
-    templates.py       → TEMPLATE_META, template_meta()
-    payment.py         → PaymentStudentData, build_payment_message()
-    timetable_slots.py → compute_buffer_slots, build_booked_cell_set, run_slot_generation
 ```
+
+### Service layer pattern
+
+Each feature has a `service.py` that owns domain logic and raises typed exceptions:
+
+- **Domain exceptions** (e.g. `StudentNotFoundError`, `TimetableValidationError`) are raised by the service.
+- **HTTP routers** catch domain exceptions → re-raise as `HTTPException` with the appropriate status code.
+- **Agent tools** catch domain exceptions → return `{"error": str(err)}` (non-fatal; the LLM sees the error and can respond accordingly).
+
+This keeps HTTP semantics out of the service layer and error handling out of tool implementations.
+
+## Design decisions
+
+### Self-evaluation after mutations (`eval.py`)
+
+After any agent tool round that includes a write operation, `self_eval` runs a read-back query against Supabase to verify the mutation landed:
+
+- `create_student` / `update_student` — SELECT by id, confirm row exists
+- `delete_student` — SELECT by id, confirm row is gone
+- `update_timetable_rules` — read back `timetable_rules`, compare to what was written
+- `update_buffer_mins` — read back `timetable_buffer_mins`, compare parsed integer
+
+**Per-round, not post-loop.** Both the classic Gemini loop and the LangGraph post-hooks run `self_eval` inside the tool-execution loop — once per tool round, covering all mutations from that round in parallel via `asyncio.gather`. If the agent updates two students in one round (the system prompt encourages batching), both are verified simultaneously, not just the last one.
+
+**Passive audit (Option A) — results are shown to the user, never fed back to the agent.** A successful verification appears as a `✓ verified in DB` step in the chat UI; a failure appears as `⚠ could not verify`. The agent never sees these verdicts and cannot retry based on them.
+
+This is the standard industry approach for interactive agents: transient infrastructure failures (a Supabase read racing against a just-completed write, a momentary network blip) should not trigger agent retries that risk duplicate writes. The human operator sees the audit result and can take corrective action if needed. Feeding verification failures back into the LLM loop treats a monitoring concern as an agent-control concern, which conflates two responsibilities and introduces the risk of write amplification.
 
 ## API routes
 
