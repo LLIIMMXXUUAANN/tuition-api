@@ -105,7 +105,7 @@ app/
         timetable_tools.py → 5 timetable + slot-generation tools
       lg/
         model.py         → get_gemini_chat_model (fresh ChatGoogle per call)
-        handoff.py       → HandoffTask, create_dispatch_tool
+        handoff.py       → create_dispatch_tool, normalize_agent_name
         subagent.py      → build_subagent (ReAct graph: agent → tools → post_hook → agent)
         tool_factories.py → make_student_tools / make_template_tools / make_timetable_tools
         student_agent.py → make_student_agent

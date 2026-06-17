@@ -5,17 +5,12 @@ from __future__ import annotations
 import re
 
 from langchain_core.tools import StructuredTool
-from pydantic import BaseModel, Field
+from pydantic import Field
 
 
 def normalize_agent_name(name: str) -> str:
     """Slugify agent name: lowercase, spaces to underscores."""
     return re.sub(r"\s+", "_", name.strip()).lower()
-
-
-class HandoffTask(BaseModel):
-    agentName: str
-    task: str
 
 
 def create_dispatch_tool(agents: list[dict]) -> StructuredTool:
