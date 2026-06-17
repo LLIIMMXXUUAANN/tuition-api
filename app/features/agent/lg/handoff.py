@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 
 from langchain_core.tools import StructuredTool
-from pydantic import Field
+from pydantic import BaseModel, Field
 
 
 def normalize_agent_name(name: str) -> str:
