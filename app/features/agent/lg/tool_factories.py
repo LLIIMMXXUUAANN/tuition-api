@@ -1,4 +1,4 @@
-"""LangGraph tool factories — wrap the 19 shared tool implementations in StructuredTool instances.
+"""LangGraph tool factories — wrap the 18 shared tool implementations in StructuredTool instances.
 
 Port of src/features/agent/lib/lg/tool-factories.ts.
 """

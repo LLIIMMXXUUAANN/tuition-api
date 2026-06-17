@@ -95,12 +95,12 @@ app/
       service.py       → TEMPLATE_META, template_meta(), get_template
     agent/
       router.py        → AI agent SSE — classic Gemini loop + LangGraph
-      schema.py        → TOOL_DECLARATIONS (19 tools) + SYSTEM_INSTRUCTION
+      schema.py        → TOOL_DECLARATIONS (18 tools) + SYSTEM_INSTRUCTION
       eval.py          → self_eval — post-mutation DB verification (see Design decisions)
       state.py         → stop_signals dict (keyed by request_id)
       tools/
         shared.py        → err_msg helper, SupabaseClient type alias
-        student_tools.py → 11 student + Google + portal tools
+        student_tools.py → 10 student + Google + portal tools
         template_tools.py → 3 template + payment-message tools
         timetable_tools.py → 5 timetable + slot-generation tools
       lg/
@@ -149,6 +149,14 @@ After any agent tool round that includes a write operation, `self_eval` runs a r
 **Passive audit (Option A) — results are shown to the user, never fed back to the agent.** A successful verification appears as a `✓ verified in DB` step in the chat UI; a failure appears as `⚠ could not verify`. The agent never sees these verdicts and cannot retry based on them.
 
 This is the standard industry approach for interactive agents: transient infrastructure failures (a Supabase read racing against a just-completed write, a momentary network blip) should not trigger agent retries that risk duplicate writes. The human operator sees the audit result and can take corrective action if needed. Feeding verification failures back into the LLM loop treats a monitoring concern as an agent-control concern, which conflates two responsibilities and introduces the risk of write amplification.
+
+### UI side-effect events (`execute_tool` + `side_effects` list)
+
+Two tools (`generate_slot_availability`, `download_timetable_image`) trigger frontend UI events — a download button appears in the chat after they run. These are emitted as SSE events of type `slots_ready` and `download_schedule`.
+
+The coupling between "which tools trigger UI events" and the SSE emission is kept in `execute_tool`'s match block (the dispatch layer), not in the main generator loop. `execute_tool` accepts an optional `side_effects: list[dict] | None` parameter; the two special match cases append their event dict to the list if the result contains the expected key. The main loop creates the list, passes it to `run_tool`, and drains it with `yield` after all tools complete.
+
+This mirrors the LangGraph version's `config.writer` callback pattern (`tool_factories.py` calls `writer(...)` from inside the tool wrapper; the stream adapter forwards `custom` events as SSE). Both approaches avoid tool-name checks in the main streaming loop — adding a new UI-trigger tool only requires editing `execute_tool`, not the loop.
 
 ## API routes
 

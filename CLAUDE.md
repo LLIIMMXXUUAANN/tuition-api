@@ -74,7 +74,7 @@ This keeps HTTP semantics out of the service layer and prevents error handling f
 
 `app/features/agent/router.py` exposes two SSE endpoints:
 
-1. **`POST /agent/chat`** — Classic single-agent mode. Drives the Google Gemini SDK (`google-genai`) directly in a tool-call loop (up to 10 rounds). Tool declarations live in `app/features/agent/schema.py`. Tool implementations are in `app/features/agent/tools/` and dispatched via a `match` block in `execute_tool`. After each tool round, all mutations in that round are verified in parallel via `self_eval` (`app/features/agent/eval.py`) — see Design decisions below.
+1. **`POST /agent/chat`** — Classic single-agent mode. Drives the Google Gemini SDK (`google-genai`) directly in a tool-call loop (up to 10 rounds). Tool declarations live in `app/features/agent/schema.py`. Tool implementations are in `app/features/agent/tools/` and dispatched via a `match` block in `execute_tool`. `execute_tool` accepts an optional `side_effects: list[dict]` parameter — tools that trigger frontend UI events (download buttons) append their SSE event dict to this list; the main loop drains it with `yield` after all tools complete. After each tool round, all mutations are verified in parallel via `self_eval` (`app/features/agent/eval.py`) — see Design decisions below.
 
 2. **`POST /agent/lg/chat`** — LangGraph multi-agent mode. Builds a supervisor + three subagents on every request (`make_supervisor` in `app/features/agent/lg/supervisor.py`) then streams via `app/features/agent/lg/stream_adapter.py`.
 
@@ -92,7 +92,7 @@ START → supervisor ──dispatch──► student_agent  ──► supervisor
 
 - **`app/features/agent/lg/supervisor.py`** — `make_supervisor(supabase, date_string)` + `build_custom_supervisor()`: custom supervisor that avoids `@langchain/langgraph-supervisor`; fixes echoing issues; routes with a single `dispatch` tool (`app/features/agent/lg/handoff.py`) containing `handoffs: [{agentName, task}]`. Parallel dispatch is a single `Command` with multiple `Send` targets. One LLM call per supervisor turn (not two).
 - **`app/features/agent/lg/subagent.py`** — `build_subagent()` creates a standard ReAct graph (agent → tools → optional post-hook → agent → END).
-- **`app/features/agent/lg/tool_factories.py`** — `make_student_tools()`, `make_template_tools()`, `make_timetable_tools()`: wrap the 19 shared tool implementations in Pydantic schemas for LangGraph.
+- **`app/features/agent/lg/tool_factories.py`** — `make_student_tools()`, `make_template_tools()`, `make_timetable_tools()`: wrap the 18 shared tool implementations in Pydantic schemas for LangGraph.
 - Each of the three subagents (`student_agent.py`, `template_agent.py`, `timetable_agent.py`) wraps its tool set with a domain-specific system prompt.
 - **`app/features/agent/lg/post_hooks.py`** — `make_student_post_hook()`, `make_timetable_post_hook()`: run `self_eval` for all mutations in the current tool round (in parallel via `asyncio.gather`) and inject a combined verdict as a `SystemMessage(name="self_eval")` — see Design decisions below.
 - **`app/features/agent/lg/stream_adapter.py`** — `pipe_langgraph_stream()` translates LangGraph's `(namespace, mode, data)` event tuples into the same SSE event types as the classic endpoint. `is_routing_relevant()` filters what gets stored in `lgHistory` (keeps human messages, dispatch decisions, subagent final replies, self-eval verdicts; drops subagent-internal tool call pairs).

@@ -1,4 +1,4 @@
-"""Agent schema — 19 FunctionDeclarations + SYSTEM_INSTRUCTION.
+"""Agent schema — 18 FunctionDeclarations + SYSTEM_INSTRUCTION.
 
 Port of:
   src/features/agent/lib/schema.ts

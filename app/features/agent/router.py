@@ -119,7 +119,9 @@ def _content_to_dict(c: types.Content) -> dict:
 # ---------------------------------------------------------------------------
 
 
-async def execute_tool(name: str, args: dict, supabase) -> dict | list:
+async def execute_tool(
+    name: str, args: dict, supabase, side_effects: list[dict] | None = None
+) -> dict | list:
     match name:
         case "search_students":
             return await search_students(supabase, args["query"])
@@ -154,9 +156,15 @@ async def execute_tool(name: str, args: dict, supabase) -> dict | list:
         case "update_buffer_mins":
             return await update_buffer_mins(supabase, args["buffer_mins"])
         case "generate_slot_availability":
-            return await generate_slot_availability(supabase, args.get("student_availability", ""))
+            result = await generate_slot_availability(supabase, args.get("student_availability", ""))
+            if side_effects is not None and isinstance(result, dict) and "slots" in result:
+                side_effects.append({"type": "slots_ready", "slots": result["slots"]})
+            return result
         case "download_timetable_image":
-            return await download_timetable_image(supabase)
+            result = await download_timetable_image(supabase)
+            if side_effects is not None and isinstance(result, dict) and "students" in result:
+                side_effects.append({"type": "download_schedule", "students": result["students"]})
+            return result
         case _:
             return {"error": f"Unknown tool: {name}"}
 
@@ -254,10 +262,11 @@ async def agent_chat(request: Request):
 
                 # Execute all tools in parallel, record timings
                 timings: list[dict] = [{}] * len(named_calls)
+                side_effects: list[dict] = []
 
                 async def run_tool(fc, idx: int):
                     t0 = time.monotonic()
-                    result = await execute_tool(fc.name, dict(fc.args or {}), supabase)
+                    result = await execute_tool(fc.name, dict(fc.args or {}), supabase, side_effects)
                     timings[idx] = {"name": fc.name, "ms": int((time.monotonic() - t0) * 1000)}
                     return result
 
@@ -269,7 +278,7 @@ async def agent_chat(request: Request):
                     timing_str = ", ".join(f"{t['name']} {t['ms']}ms" for t in timings)
                     yield {"data": json.dumps({"type": "step", "content": f"⏱ parallel ×{len(named_calls)} — {timing_str} (total {round_ms}ms)"})}
 
-                # Build function response parts and emit special events
+                # Build function response parts
                 fn_response_parts: list[types.Part] = []
                 for i, fc in enumerate(named_calls):
                     result = tool_results[i]
@@ -280,11 +289,9 @@ async def agent_chat(request: Request):
                         )
                     ))
 
-                    # Special SSE events
-                    if fc.name == "download_timetable_image" and isinstance(result, dict) and "students" in result:
-                        yield {"data": json.dumps({"type": "download_schedule", "students": result["students"]})}
-                    elif fc.name == "generate_slot_availability" and isinstance(result, dict) and "slots" in result:
-                        yield {"data": json.dumps({"type": "slots_ready", "slots": result["slots"]})}
+                # Emit UI side-effect events collected during tool execution
+                for event in side_effects:
+                    yield {"data": json.dumps(event)}
 
                 contents.append(types.Content(role="user", parts=fn_response_parts))
 
