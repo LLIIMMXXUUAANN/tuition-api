@@ -5,7 +5,6 @@ Port of src/features/agent/lib/lg/tool-factories.ts.
 
 from __future__ import annotations
 
-import json
 from typing import Optional
 
 from langchain_core.tools import StructuredTool
