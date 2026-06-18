@@ -124,14 +124,21 @@ You have ONE routing tool: `dispatch`. Call it with an array of `{{ agentName, t
 Examples:
 - "show me details for Ang and Zng Yi" → `dispatch({{ handoffs: [{{ agentName: "student_agent", task: "Get full details for both Ang and Zng Yi." }}] }})` (one entry — same agent)
 - "list students AND show first-approach template" → `dispatch({{ handoffs: [{{ agentName: "student_agent", task: "List all active students." }}, {{ agentName: "template_agent", task: "Get the first-approach template." }}] }})` (two entries — different agents)
+
+❌ WRONG — two entries for same agent (spawns two separate subagent instances):
+  `dispatch({{ handoffs: [{{ agentName: "student_agent", task: "Update Ang fee to 60." }}, {{ agentName: "student_agent", task: "Update Zng Yi fee to 60." }}] }})`
+
+✓ RIGHT — one combined entry (subagent batches the tool calls internally):
+  `dispatch({{ handoffs: [{{ agentName: "student_agent", task: "Update both Ang and Zng Yi fee to 60." }}] }})`
 - **Payment messages always require a student UUID.** If the user names a student (not a UUID), first dispatch to student_agent to get the UUID, then in a second dispatch call route to template_agent with the UUID in the task.
 
 WRITING TASKS FOR SUBAGENTS:
 Always write a precise, self-contained task in the `task` field:
 - Resolve time references using today's injected date: "today" → specific date, "this month" → "May 2026"
 - State the exact action: "Get...", "Create...", "Update...", "Generate..."
-- Each task must stand alone — subagents cannot see each other's tasks
+- Each task must stand alone — subagents cannot see each other's tasks or the conversation history
 - **Never expand or guess student names** — copy the exact name or partial name the user typed (search_students does partial matching, so "Ang" is a valid search term)
+- **UUID propagation (important):** Scan the conversation history for [student_id:NAME:UUID] tokens in prior replies. If a student's UUID is already known, include it explicitly in the task so the subagent can act directly without searching. Format: "Update Ang (id: 2dfa867c-b2b8-472d-96a5-63f4c2d5e466) fee to 60." If the UUID is NOT known, use only the name — the subagent will search.
 - Example: `{{ agentName: "student_agent", task: "Get the class schedule for Tuesday 2026-05-19." }}`
 
 RELAYING SUBAGENT REPLIES:
@@ -201,8 +208,19 @@ def build_custom_supervisor(agents: list, llm, prompt: str, supervisor_name: str
                 # Pydantic model
                 handoff_list.append({"agentName": h.agentName, "task": h.task})
 
+        # Merge entries targeting the same agent into one combined task.
+        # dict preserves insertion order (Python 3.7+) so dispatch order is stable.
+        merged: dict[str, str] = {}
+        for h in handoff_list:
+            agent = h["agentName"]
+            if agent in merged:
+                merged[agent] = merged[agent] + "\n" + h["task"]
+            else:
+                merged[agent] = h["task"]
+        merged_list = [{"agentName": k, "task": v} for k, v in merged.items()]
+
         tool_msg = ToolMessage(
-            content=f"Dispatching {len(handoff_list)} task(s) to: {', '.join(h['agentName'] for h in handoff_list)}",
+            content=f"Dispatching {len(merged_list)} task(s) to: {', '.join(h['agentName'] for h in merged_list)}",
             name="dispatch",
             tool_call_id=dispatch_call.get("id") or "",
         )
@@ -211,7 +229,7 @@ def build_custom_supervisor(agents: list, llm, prompt: str, supervisor_name: str
             update={"messages": [response, tool_msg]},
             goto=[
                 Send(h["agentName"], {"messages": [HumanMessage(h["task"])]})
-                for h in handoff_list
+                for h in merged_list
             ],
         )
 

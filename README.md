@@ -150,6 +150,14 @@ After any agent tool round that includes a write operation, `self_eval` runs a r
 
 This is the standard industry approach for interactive agents: transient infrastructure failures (a Supabase read racing against a just-completed write, a momentary network blip) should not trigger agent retries that risk duplicate writes. The human operator sees the audit result and can take corrective action if needed. Feeding verification failures back into the LLM loop treats a monitoring concern as an agent-control concern, which conflates two responsibilities and introduces the risk of write amplification.
 
+### LangGraph dispatch reliability
+
+Two structural invariants are enforced in code rather than relying solely on prompt rules:
+
+**Same-agent dedup.** The supervisor LLM is prompted to combine tasks for the same subagent into one `dispatch` entry (so the subagent can batch tool calls internally). When the LLM creates two separate entries for the same agent anyway, `supervisor_node` merges them: after normalising `handoff_list`, a `merged: dict[str, str]` groups entries by `agentName` and joins tasks with `\n`. Only then are `Send` commands emitted — guaranteeing one subagent invocation per agent regardless of LLM compliance.
+
+**UUID propagation.** `build_supervisor_prompt` instructs the supervisor to scan prior replies for `[student_id:NAME:UUID]` tokens and embed known UUIDs in task descriptions (e.g. `"Update Ang (id: 2dfa867c-...) fee to 60"`). `STUDENT_PROMPT` instructs the student_agent: if the task contains a UUID in parentheses, call `update_student` directly — no `search_students` needed. The student_agent also appends `[student_id:NAME:UUID]` tokens to every reply involving `get_student`, `create_student`, or `update_student`; these tokens flow into `lgHistory` via `is_routing_relevant`, making UUIDs available to the supervisor for subsequent turns.
+
 ### UI side-effect events (`execute_tool` + `side_effects` list)
 
 Two tools (`generate_slot_availability`, `download_timetable_image`) trigger frontend UI events — a download button appears in the chat after they run. These are emitted as SSE events of type `slots_ready` and `download_schedule`.

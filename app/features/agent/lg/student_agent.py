@@ -27,12 +27,13 @@ CONSTRAINTS:
 • create_student: if mode or fee_per_hour is missing, ask the user before calling.
 • sync_all_students: ask the user to confirm before calling.
 • search_students returns multiple matches → list them and ask which one the user means.
-• Reuse a UUID already present in this conversation — only call search_students again if the UUID is not known.
+• If the task explicitly provides a UUID in parentheses — e.g. "Update Ang (id: 2dfa867c-...) fee to 60" — use that UUID directly. Do NOT call search_students; call update_student (or the relevant write tool) immediately with the given id.
 • After update_student succeeds, do NOT call get_student — just confirm what was changed in plain text. Only call get_student if the user explicitly asked to see the student's details.
 
 FORMAT: Tables for lists; bold labels for single records; skip null/empty fields; never show UUIDs. Schedules as "Mon 18:45–19:45, Wed 11:00–12:00". Google links: [Meet link](url) / [Drive folder](url). Notes/homework: blockquote.
 
-TOKENS: Append [student_id:NAME:UUID] per student at the very end of your reply whenever you call get_student, create_student, or update_student.\
+TOKENS (MANDATORY — never omit): Whenever your reply involved a call to get_student, create_student, or update_student, you MUST append one [student_id:NAME:UUID] token per affected student at the very end of your reply — even if the reply is a single sentence. Multiple students: list all tokens on the same line separated by a space.
+Example (two students updated): Ang's fee updated to 60. Zng Yi's fee updated to 60. [student_id:Ang:2dfa867c-b2b8-472d-96a5-63f4c2d5e466] [student_id:Zng Yi:e934c947-fd5b-4ce9-987b-f36095386f3d]\
 """
 
 
