@@ -9,6 +9,8 @@ from langchain_core.runnables import RunnableConfig
 from langgraph.graph import END, START, MessagesState, StateGraph
 from langgraph.prebuilt import ToolNode
 
+TERMINAL_TOOLS = {"final_answer", "cannot_complete"}
+
 
 def build_subagent(
     name: str,
@@ -21,8 +23,9 @@ def build_subagent(
     """Build a standard ReAct subagent graph.
 
     Graph structure:
-        START → agent ──(tool_calls?)──► tools → [post_hook] → agent
-                      └──(no calls)───────────────────────────► END
+        START → agent ──(tool_calls?)──► tools → [post_hook] → (terminal?) → END
+                      └──(no calls)──────────────────────────────────────── END
+                                                               └──(no)──► agent
     """
     tools = tools or []
     model = llm.bind_tools(tools)
@@ -41,6 +44,15 @@ def build_subagent(
             return "tools"
         return END
 
+    def route_after_tools(state: MessagesState):
+        for m in reversed(state["messages"]):
+            if isinstance(m, (AIMessage, AIMessageChunk)):
+                tool_calls = getattr(m, "tool_calls", None) or []
+                if any(tc.get("name") in TERMINAL_TOOLS for tc in tool_calls):
+                    return END
+                return "agent"
+        return "agent"
+
     tool_node = ToolNode(tools)
     builder = StateGraph(MessagesState)
     builder.add_node("agent", agent_node)
@@ -51,9 +63,9 @@ def build_subagent(
     if post_tool_hook:
         builder.add_node("post_hook", post_tool_hook)
         builder.add_edge("tools", "post_hook")
-        builder.add_edge("post_hook", "agent")
+        builder.add_conditional_edges("post_hook", route_after_tools, ["agent", END])
     else:
-        builder.add_edge("tools", "agent")
+        builder.add_conditional_edges("tools", route_after_tools, ["agent", END])
 
     compiled = builder.compile()
     compiled.name = name

@@ -106,8 +106,8 @@ app/
       lg/
         model.py         → get_gemini_chat_model (fresh ChatGoogle per call)
         handoff.py       → create_dispatch_tool, normalize_agent_name
-        subagent.py      → build_subagent (ReAct graph: agent → tools → post_hook → agent)
-        tool_factories.py → make_student_tools / make_template_tools / make_timetable_tools (+ make_cannot_complete_tool appended to each)
+        subagent.py      → build_subagent (ReAct graph: agent → tools → post_hook → terminal? → END/agent)
+        tool_factories.py → make_student_tools / make_template_tools / make_timetable_tools (+ make_cannot_complete_tool + make_final_answer_tool appended to each)
         student_agent.py → make_student_agent
         template_agent.py → make_template_agent
         timetable_agent.py → make_timetable_agent
@@ -170,15 +170,19 @@ When a subagent completes its task and hands back to the supervisor, the supervi
 
 The code fallback is the authoritative path (it never fails); the prompt rule reduces the frequency of the fallback being needed.
 
-### Subagent `cannot_complete` tool (`tool_factories.py`)
+### Subagent terminal tools (`tool_factories.py` + `subagent.py`)
 
-Each subagent has a `cannot_complete(reason: str)` tool added via `make_cannot_complete_tool()`. When a subagent receives a task that doesn't match its available tools, it calls this instead of outputting vague free text.
+Each subagent has two terminal tools that end its turn immediately without an extra LLM summarization call:
 
-- **Visible in LangSmith traces** as an explicit tool call step rather than an invisible free-text failure.
-- **Structured signal** — the `reason` string is returned to the supervisor as the ToolMessage content, giving it a clear `"Cannot complete: ..."` message to relay to the user.
-- **Forces articulation** — the subagent must state a specific reason rather than guessing or hallucinating a response.
+**`final_answer(text)`** — the normal exit. When the subagent has all necessary information, it calls `final_answer(text="...")` with its complete reply (tables, tokens, formatted content all inside `text`). The ToolMessage content becomes the handoff reply; no further LLM call is made.
 
-The tool itself is trivial (`return f"Cannot complete: {reason}"`); the value is in directing the LLM to call it explicitly. No changes to `make_call_agent` or `supervisor_node` are needed — the existing ReAct loop handles it naturally (subagent calls tool → gets result → outputs final text → END → supervisor receives the reply via the handoff messages).
+**`cannot_complete(reason)`** — the failure exit. When the subagent receives a task that doesn't match its available tools, it calls this instead of outputting vague free text. Visible in LangSmith traces as an explicit step; gives the supervisor a clear `"Cannot complete: ..."` message to relay.
+
+**Terminal routing in `subagent.py`:** `TERMINAL_TOOLS = {"final_answer", "cannot_complete"}`. After `tools` (or `post_hook`) runs, `route_after_tools` scans the last AIMessage's tool_calls — if any are in `TERMINAL_TOOLS`, it routes to `END` directly, bypassing the next `agent` LLM call. `should_continue` on the `agent` node is retained as a non-compliance safety net (if the LLM outputs no tool calls at all, it routes to `END` without entering `ToolNode`).
+
+**`make_call_agent` in `supervisor.py`:** reply extraction now first looks for a `final_answer` or `cannot_complete` ToolMessage; falls back to a free-text AIMessage for backward compatibility.
+
+**Savings:** one LLM call per subagent invocation — the extra "summarization" turn that previously rephrased tool results into natural language is eliminated.
 
 ### UI side-effect events (`execute_tool` + `side_effects` list)
 

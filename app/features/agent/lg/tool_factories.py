@@ -73,6 +73,29 @@ def make_cannot_complete_tool() -> StructuredTool:
     )
 
 
+class FinalAnswerInput(BaseModel):
+    text: str = Field(
+        description=(
+            "Your complete reply to the user. Include all formatted content — "
+            "tables, bold labels, [student_id:NAME:UUID] tokens — inside this parameter."
+        )
+    )
+
+
+def make_final_answer_tool() -> StructuredTool:
+    """Return a final_answer tool — ends the subagent turn with a structured reply."""
+
+    def final_answer(text: str) -> str:
+        return text
+
+    return StructuredTool.from_function(
+        func=final_answer,
+        name="final_answer",
+        description="Call this with your complete reply once you have finished all necessary tool calls. This ends your turn immediately.",
+        args_schema=FinalAnswerInput,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Student tool schemas
 # ---------------------------------------------------------------------------
@@ -319,6 +342,7 @@ def make_student_tools(supabase) -> list[StructuredTool]:
             args_schema=GetFeeSummaryInput,
         ),
         make_cannot_complete_tool(),
+        make_final_answer_tool(),
     ]
 
 
@@ -370,6 +394,7 @@ def make_template_tools(supabase) -> list[StructuredTool]:
             args_schema=GeneratePaymentMessageInput,
         ),
         make_cannot_complete_tool(),
+        make_final_answer_tool(),
     ]
 
 
@@ -444,4 +469,5 @@ def make_timetable_tools(supabase) -> list[StructuredTool]:
             args_schema=NoArgInput,
         ),
         make_cannot_complete_tool(),
+        make_final_answer_tool(),
     ]

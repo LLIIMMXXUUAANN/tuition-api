@@ -74,12 +74,20 @@ def make_call_agent(agent, supervisor_name: str):
         output = await agent.ainvoke(state, config=config)
         messages = output.get("messages", [])
 
-        # Find last AI reply without tool calls
+        # Find reply: prefer terminal tool ToolMessage, fall back to free-text AIMessage
         reply_text = ""
         for m in reversed(messages):
-            if isinstance(m, (AIMessage, AIMessageChunk)) and not getattr(m, "tool_calls", None):
-                reply_text = _extract_text(m)
+            if isinstance(m, ToolMessage) and getattr(m, "name", "") in ("final_answer", "cannot_complete"):
+                reply_text = m.content if isinstance(m.content, str) else ""
                 break
+
+        if not reply_text:
+            for m in reversed(messages):
+                if isinstance(m, (AIMessage, AIMessageChunk)) and not getattr(m, "tool_calls", None):
+                    text = _extract_text(m)
+                    if text:
+                        reply_text = text
+                        break
 
         return {"messages": _create_handoff_back_messages(agent.name, supervisor_name, reply_text)}
 
