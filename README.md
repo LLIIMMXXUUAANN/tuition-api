@@ -150,6 +150,14 @@ After any agent tool round that includes a write operation, `self_eval` runs a r
 
 This is the standard industry approach for interactive agents: transient infrastructure failures (a Supabase read racing against a just-completed write, a momentary network blip) should not trigger agent retries that risk duplicate writes. The human operator sees the audit result and can take corrective action if needed. Feeding verification failures back into the LLM loop treats a monitoring concern as an agent-control concern, which conflates two responsibilities and introduces the risk of write amplification.
 
+### Why a custom supervisor instead of `langgraph-supervisor` (`supervisor.py`)
+
+The official `langgraph-supervisor` package was replaced with a custom `build_custom_supervisor` to fix two specific issues:
+
+1. **Echoing.** The official package echoes the handoff ToolMessage content (`"Successfully transferred back to supervisor"`) as the supervisor's reply instead of forwarding the subagent's actual answer. The custom supervisor puts the real reply in the ToolMessage and has the supervisor LLM relay it verbatim.
+
+2. **Double LLM call per supervisor turn.** The official package wraps the supervisor in `createReactAgent`, which always makes two LLM calls per turn (LLM → tool → LLM again to "check if done"). A routing supervisor makes exactly one decision per turn — the second call is pure waste. The custom `supervisor_node` calls the LLM once via `.astream()` and returns immediately.
+
 ### LangGraph dispatch reliability
 
 Two structural invariants are enforced in code rather than relying solely on prompt rules:
