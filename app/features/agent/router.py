@@ -59,6 +59,7 @@ MUTATION_TOOLS = {
     "delete_student",
     "update_timetable_rules",
     "update_buffer_mins",
+    "manage_portal_access",
 }
 
 

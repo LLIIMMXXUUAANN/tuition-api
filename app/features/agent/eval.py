@@ -38,6 +38,28 @@ async def self_eval(
             )
             return "✓ verified deleted" if not (result and result.data) else "_⚠ student still exists in DB_"
 
+        if tool_name == "manage_portal_access":
+            student_id = args.get("student_id")
+            email = args.get("email", "")
+            action = args.get("action")
+            if not student_id:
+                return "⚠ could not verify"
+            result = (
+                await supabase.from_("students")
+                .select("access_emails")
+                .eq("id", student_id)
+                .maybe_single()
+                .execute()
+            )
+            if not (result and result.data):
+                return "⚠ could not verify"
+            emails: list = result.data.get("access_emails") or []
+            if action == "add":
+                return "✓ email added to portal access" if email in emails else "⚠ email not found in access_emails"
+            if action == "remove":
+                return "✓ email removed from portal access" if email not in emails else "⚠ email still present in access_emails"
+            return "⚠ could not verify"
+
         if tool_name == "update_timetable_rules":
             result = (
                 await supabase.from_("settings")
