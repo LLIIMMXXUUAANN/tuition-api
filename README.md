@@ -107,7 +107,7 @@ app/
         model.py         → get_gemini_chat_model (fresh ChatGoogle per call)
         handoff.py       → create_dispatch_tool, normalize_agent_name
         subagent.py      → build_subagent (ReAct graph: agent → tools → post_hook → agent)
-        tool_factories.py → make_student_tools / make_template_tools / make_timetable_tools
+        tool_factories.py → make_student_tools / make_template_tools / make_timetable_tools (+ make_cannot_complete_tool appended to each)
         student_agent.py → make_student_agent
         template_agent.py → make_template_agent
         timetable_agent.py → make_timetable_agent
@@ -157,6 +157,28 @@ Two structural invariants are enforced in code rather than relying solely on pro
 **Same-agent dedup.** The supervisor LLM is prompted to combine tasks for the same subagent into one `dispatch` entry (so the subagent can batch tool calls internally). When the LLM creates two separate entries for the same agent anyway, `supervisor_node` merges them: after normalising `handoff_list`, a `merged: dict[str, str]` groups entries by `agentName` and joins tasks with `\n`. Only then are `Send` commands emitted — guaranteeing one subagent invocation per agent regardless of LLM compliance.
 
 **UUID propagation.** `build_supervisor_prompt` instructs the supervisor to scan prior replies for `[student_id:NAME:UUID]` tokens and embed known UUIDs in task descriptions (e.g. `"Update Ang (id: 2dfa867c-...) fee to 60"`). `STUDENT_PROMPT` instructs the student_agent: if the task contains a UUID in parentheses, call `update_student` directly — no `search_students` needed. The student_agent also appends `[student_id:NAME:UUID]` tokens to every reply involving `get_student`, `create_student`, or `update_student`; these tokens flow into `lgHistory` via `is_routing_relevant`, making UUIDs available to the supervisor for subsequent turns.
+
+### Supervisor silent relay guarantee (`supervisor.py`)
+
+When a subagent completes its task and hands back to the supervisor, the supervisor must relay the subagent's reply verbatim. Three complementary layers enforce this:
+
+**`content=""` on handoff AIMessage.** `_create_handoff_back_messages` sets the AIMessage content to an empty string. The prior value (`"Transferring back to supervisor"`) was a model-role message that Gemini mistook for its own prior output — causing it to consider its turn "already done" and produce no new text.
+
+**Code fallback in `supervisor_node`.** After the LLM response is accumulated, if there is no `dispatch` call and no extracted text, `supervisor_node` scans backward through state messages for the most recent `transfer_back_to_*` ToolMessages (the subagent reply carriers) and joins their content as the reply. This deterministic relay path guarantees output even when the LLM goes silent — prompts define desired behaviour, code enforces invariants.
+
+**CRITICAL prompt rule.** `build_supervisor_prompt` ends with an explicit rule: every supervisor turn must produce either a `dispatch` call or non-empty text; empty output is never valid. The rule also instructs the LLM to output the last ToolMessage content verbatim as a fallback.
+
+The code fallback is the authoritative path (it never fails); the prompt rule reduces the frequency of the fallback being needed.
+
+### Subagent `cannot_complete` tool (`tool_factories.py`)
+
+Each subagent has a `cannot_complete(reason: str)` tool added via `make_cannot_complete_tool()`. When a subagent receives a task that doesn't match its available tools, it calls this instead of outputting vague free text.
+
+- **Visible in LangSmith traces** as an explicit tool call step rather than an invisible free-text failure.
+- **Structured signal** — the `reason` string is returned to the supervisor as the ToolMessage content, giving it a clear `"Cannot complete: ..."` message to relay to the user.
+- **Forces articulation** — the subagent must state a specific reason rather than guessing or hallucinating a response.
+
+The tool itself is trivial (`return f"Cannot complete: {reason}"`); the value is in directing the LLM to call it explicitly. No changes to `make_call_agent` or `supervisor_node` are needed — the existing ReAct loop handles it naturally (subagent calls tool → gets result → outputs final text → END → supervisor receives the reply via the handoff messages).
 
 ### UI side-effect events (`execute_tool` + `side_effects` list)
 

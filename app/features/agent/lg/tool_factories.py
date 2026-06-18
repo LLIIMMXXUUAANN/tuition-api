@@ -55,6 +55,24 @@ class NoArgInput(BaseModel):
     reason: Optional[str] = Field(default=None, description="Optional reason for invoking this tool")
 
 
+class CannotCompleteInput(BaseModel):
+    reason: str = Field(description="Why the task cannot be completed with available tools")
+
+
+def make_cannot_complete_tool() -> StructuredTool:
+    """Return a cannot_complete tool — a structured signal for when a subagent lacks suitable tools."""
+
+    def cannot_complete(reason: str) -> str:
+        return f"Cannot complete: {reason}"
+
+    return StructuredTool.from_function(
+        func=cannot_complete,
+        name="cannot_complete",
+        description="Call this when the assigned task cannot be completed with your available tools. State a clear reason.",
+        args_schema=CannotCompleteInput,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Student tool schemas
 # ---------------------------------------------------------------------------
@@ -300,6 +318,7 @@ def make_student_tools(supabase) -> list[StructuredTool]:
             description="Calculate monthly fees for all active students. Omit month/year to use current month.",
             args_schema=GetFeeSummaryInput,
         ),
+        make_cannot_complete_tool(),
     ]
 
 
@@ -350,6 +369,7 @@ def make_template_tools(supabase) -> list[StructuredTool]:
             ),
             args_schema=GeneratePaymentMessageInput,
         ),
+        make_cannot_complete_tool(),
     ]
 
 
@@ -423,4 +443,5 @@ def make_timetable_tools(supabase) -> list[StructuredTool]:
             ),
             args_schema=NoArgInput,
         ),
+        make_cannot_complete_tool(),
     ]

@@ -55,7 +55,7 @@ def _create_handoff_back_messages(
     tool_name = f"transfer_back_to_{normalize_agent_name(supervisor_name)}"
     return [
         AIMessage(
-            content=f"Transferring back to {supervisor_name}",
+            content="",
             tool_calls=[{"name": tool_name, "args": {}, "id": tool_call_id}],
             name=agent_name,
         ),
@@ -146,7 +146,12 @@ When a subagent calls transfer_back_to_supervisor, its reply is in the content o
 - NEVER output "Successfully transferred back to supervisor" or "Transferring back to supervisor" — those are internal routing signals, not user-facing replies.
 - Do NOT rephrase, summarise, or add any commentary.
 - Do NOT remove [student_id:NAME:UUID] tokens or download-button hints — the UI depends on them.
-- If multiple subagents replied (parallel handoff), concatenate their replies in the order they were requested, separated by one blank line. No headings between them.\
+- If multiple subagents replied (parallel handoff), concatenate their replies in the order they were requested, separated by one blank line. No headings between them.
+
+CRITICAL — every supervisor turn MUST produce one of:
+1. A `dispatch` tool call (routing to one or more subagents)
+2. A non-empty text response (direct answer or verbatim relay of subagent output)
+Empty output — no text and no tool call — is NEVER valid. If you find yourself about to produce nothing, output the last ToolMessage content verbatim instead.\
 """
 
 
@@ -195,8 +200,22 @@ def build_custom_supervisor(agents: list, llm, prompt: str, supervisor_name: str
         )
 
         if not dispatch_call:
-            # Direct reply — no routing
-            return {"messages": [response]}
+            text = _extract_text(response)
+            if not text:
+                # LLM went silent — deterministically relay last subagent replies
+                last_dispatch_idx = -1
+                for i, m in enumerate(state["messages"]):
+                    if isinstance(m, ToolMessage) and getattr(m, "name", "") == "dispatch":
+                        last_dispatch_idx = i
+                relay_parts = []
+                for m in state["messages"][last_dispatch_idx + 1 :]:
+                    if isinstance(m, ToolMessage) and (getattr(m, "name", "") or "").startswith("transfer_back_to_"):
+                        content = m.content if isinstance(m.content, str) else ""
+                        if content:
+                            relay_parts.append(content)
+                if relay_parts:
+                    text = "\n\n".join(relay_parts)
+            return {"messages": [AIMessage(content=text or "", id=response.id)]}
 
         handoffs = dispatch_call["args"].get("handoffs", [])
         # handoffs may be dicts or Pydantic objects
