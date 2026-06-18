@@ -5,7 +5,9 @@ Port of src/features/agent/lib/lg/tool-factories.ts.
 
 from __future__ import annotations
 
-from typing import Optional
+from typing import Literal, Optional
+
+from app.types import PaymentMethod, StudentMode, StudentStatus, WeekDay
 
 from langchain_core.tools import StructuredTool
 from langgraph.config import get_stream_writer
@@ -44,7 +46,7 @@ from app.features.agent.tools.timetable_tools import (
 
 
 class ClassSlotInput(BaseModel):
-    day: str = Field(description="Day of the week (Monday–Sunday)")
+    day: WeekDay
     start: str = Field(description='24-hour HH:MM format, e.g. "15:00"')
     end: str = Field(description='24-hour HH:MM format, e.g. "17:00"')
 
@@ -67,9 +69,9 @@ class GetStudentInput(BaseModel):
 
 
 class ListStudentsInput(BaseModel):
-    status: Optional[str] = Field(
+    status: Optional[StudentStatus] = Field(
         default=None,
-        description="Filter by status: 'Active', 'On Hold', or 'Completed'. Omit for all students.",
+        description="Filter by student status. Omit for all students.",
     )
 
 
@@ -89,12 +91,12 @@ class DeleteStudentInput(BaseModel):
 
 class ManagePortalAccessInput(BaseModel):
     student_id: str = Field(description="Student UUID")
-    action: str = Field(description="'add' or 'remove'")
+    action: Literal["add", "remove"]
     email: str = Field(description="Email address to add or remove from portal access")
 
 
 class GetScheduleInput(BaseModel):
-    day: str = Field(description="Day of the week: Monday, Tuesday, Wednesday, Thursday, Friday, Saturday, or Sunday")
+    day: WeekDay
 
 
 class GetFeeSummaryInput(BaseModel):
@@ -104,10 +106,10 @@ class GetFeeSummaryInput(BaseModel):
 
 class CreateStudentInput(BaseModel):
     name: str = Field(description="Student's full name")
-    mode: str = Field(description="'My Python Syllabus' or 'Other Syllabus'")
+    mode: StudentMode
     fee_per_hour: float = Field(description="Hourly fee in RM")
-    payment_method: Optional[str] = Field(default=None, description="'Monthly' or 'Per Session'. Defaults to 'Monthly'.")
-    status: Optional[str] = Field(default=None, description="'Active', 'On Hold', or 'Completed'. Defaults to 'Active'.")
+    payment_method: Optional[PaymentMethod] = Field(default=None, description="Defaults to 'Monthly'.")
+    status: Optional[StudentStatus] = Field(default=None, description="Defaults to 'Active'.")
     class_schedule: Optional[list[ClassSlotInput]] = Field(default=None, description="Weekly class slots")
     contact_person: Optional[str] = Field(default=None, description="Parent/guardian name")
     contact_phone: Optional[str] = Field(default=None, description="Parent/guardian phone")
@@ -149,7 +151,7 @@ class UpdateTimetableRulesInput(BaseModel):
 
 
 class UpdateBufferMinsInput(BaseModel):
-    buffer_mins: int = Field(description="Buffer minutes around booked classes (0–60)")
+    buffer_mins: int = Field(ge=0, le=60, description="Buffer minutes around booked classes")
 
 
 class GenerateSlotAvailabilityInput(BaseModel):
