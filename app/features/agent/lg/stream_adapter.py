@@ -177,7 +177,7 @@ async def pipe_langgraph_stream(
 
     # Fallback: if supervisor never streamed text, emit the captured final text
     if not streamed_any_text:
-        fallback = last_supervisor_final_text or "(no response from supervisor — check server logs)"
+        fallback = last_supervisor_final_text or "Sorry, I could not generate a response. Please try again."
         yield {"data": json.dumps({"type": "chunk", "content": fallback})}
 
     # Call the on_complete callback (emits lg_history) before done
