@@ -8,12 +8,10 @@ from __future__ import annotations
 import asyncio
 import json
 
-from langchain_core.messages import AIMessage, AIMessageChunk, SystemMessage, ToolMessage
-from langgraph.graph import MessagesState
+from langchain_core.messages import AIMessage, AIMessageChunk, ToolMessage
 
 from app.features.agent.eval import self_eval
-
-SELF_EVAL_MESSAGE_NAME = "self_eval"
+from app.features.agent.lg.agent_state import AgentState
 
 STUDENT_MUTATIONS = {
     "create_student",
@@ -28,27 +26,16 @@ TIMETABLE_MUTATIONS = {
 
 
 def _find_round_mutation_calls(messages: list, mutation_set: set) -> list[dict]:
-    """Find ALL mutation tool calls from the most recent tool-calling round,
-    only searching messages AFTER the last self_eval message."""
-    last_self_eval_idx = -1
-    for i in range(len(messages) - 1, -1, -1):
-        m = messages[i]
-        if isinstance(m, SystemMessage) and getattr(m, "name", None) == SELF_EVAL_MESSAGE_NAME:
-            last_self_eval_idx = i
-            break
-
-    # range stops before last_self_eval_idx so we never re-examine prior rounds
-    for i in range(len(messages) - 1, last_self_eval_idx, -1):
-        m = messages[i]
-        if not isinstance(m, (AIMessage, AIMessageChunk)):
-            continue
-        tool_calls = getattr(m, "tool_calls", None) or []
-        mutations = [tc for tc in tool_calls if tc.get("name") in mutation_set]
-        if mutations:
-            return [
-                {"name": tc["name"], "args": tc.get("args") or {}, "tool_call_id": tc.get("id")}
-                for tc in mutations
-            ]
+    """Find mutation tool calls from the most recent tool-calling AIMessage."""
+    for m in reversed(messages):
+        if isinstance(m, (AIMessage, AIMessageChunk)):
+            tool_calls = getattr(m, "tool_calls", None) or []
+            if tool_calls:
+                return [
+                    {"name": tc["name"], "args": tc.get("args") or {}, "tool_call_id": tc.get("id")}
+                    for tc in tool_calls
+                    if tc.get("name") in mutation_set
+                ]
     return []
 
 
@@ -71,7 +58,7 @@ def _find_created_id(messages: list, tool_call_id: str | None) -> str | None:
 def _make_post_hook(supabase, mutation_set: set):
     """Return an async post-hook function for the given mutation set."""
 
-    async def post_hook(state: MessagesState) -> dict:
+    async def post_hook(state: AgentState) -> dict:
         messages = state["messages"]
         mutations = _find_round_mutation_calls(messages, mutation_set)
         if not mutations:
@@ -87,7 +74,7 @@ def _make_post_hook(supabase, mutation_set: set):
         combined = "  \n".join(v for v in verdicts if v)
         if not combined:
             return {}
-        return {"messages": [SystemMessage(content=combined, name=SELF_EVAL_MESSAGE_NAME)]}
+        return {"audit_log": [combined]}
 
     return post_hook
 

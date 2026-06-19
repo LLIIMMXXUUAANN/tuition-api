@@ -104,6 +104,7 @@ app/
         template_tools.py → 3 template + payment-message tools
         timetable_tools.py → 5 timetable + slot-generation tools
       lg/
+        agent_state.py   → AgentState (messages + audit_log — see Design decisions)
         model.py         → get_gemini_chat_model (fresh ChatGoogle per call)
         handoff.py       → create_dispatch_tool, normalize_agent_name
         subagent.py      → build_subagent (ReAct graph: agent → tools → post_hook → terminal? → END/agent)
@@ -149,6 +150,8 @@ After any agent tool round that includes a write operation, `self_eval` runs a r
 **Passive audit (Option A) — results are shown to the user, never fed back to the agent.** A successful verification appears as a `✓ verified in DB` step in the chat UI; a failure appears as `⚠ could not verify`. The agent never sees these verdicts and cannot retry based on them.
 
 This is the standard industry approach for interactive agents: transient infrastructure failures (a Supabase read racing against a just-completed write, a momentary network blip) should not trigger agent retries that risk duplicate writes. The human operator sees the audit result and can take corrective action if needed. Feeding verification failures back into the LLM loop treats a monitoring concern as an agent-control concern, which conflates two responsibilities and introduces the risk of write amplification.
+
+**LangGraph implementation — `audit_log` state field.** In the LangGraph backend, `post_hooks.py` writes verdicts to a separate `audit_log: Annotated[list[str], operator.add]` field in `AgentState` rather than injecting a `SystemMessage` into the message list. This keeps audit data structurally separated from conversation data — `audit_log` is never passed to any `model.invoke()` call regardless of which LLM is used. `stream_adapter.py` drains `audit_log` from each node's output in `updates` mode and emits the verdicts as SSE `step` events.
 
 ### Why a custom supervisor instead of `langgraph-supervisor` (`supervisor.py`)
 

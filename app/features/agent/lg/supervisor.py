@@ -8,7 +8,9 @@ import uuid
 
 from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage, SystemMessage, ToolMessage
 from langchain_core.runnables import RunnableConfig
-from langgraph.graph import END, START, MessagesState, StateGraph
+from langgraph.graph import END, START, StateGraph
+
+from app.features.agent.lg.agent_state import AgentState
 
 try:
     from langgraph.types import Command, Send
@@ -70,7 +72,7 @@ def _create_handoff_back_messages(
 def make_call_agent(agent, supervisor_name: str):
     """Wrap a compiled subagent so it returns handoff-back messages for the supervisor."""
 
-    async def call_agent(state: MessagesState, config: RunnableConfig = None) -> dict:
+    async def call_agent(state: AgentState, config: RunnableConfig = None) -> dict:
         output = await agent.ainvoke(state, config=config)
         messages = output.get("messages", [])
 
@@ -181,7 +183,7 @@ def build_custom_supervisor(agents: list, llm, prompt: str, supervisor_name: str
     dispatch_tool = create_dispatch_tool(agent_info)
     supervisor_llm = llm.bind_tools([dispatch_tool])
 
-    async def supervisor_node(state: MessagesState, config: RunnableConfig = None):
+    async def supervisor_node(state: AgentState, config: RunnableConfig = None):
         input_msgs = [SystemMessage(content=prompt)] + state["messages"]
 
         accumulated = None
@@ -260,7 +262,7 @@ def build_custom_supervisor(agents: list, llm, prompt: str, supervisor_name: str
             ],
         )
 
-    builder = StateGraph(MessagesState)
+    builder = StateGraph(AgentState)
     builder.add_node(supervisor_name, supervisor_node, destinations=agent_names)
     builder.add_edge(START, supervisor_name)
     builder.add_edge(supervisor_name, END)

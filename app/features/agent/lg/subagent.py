@@ -6,8 +6,10 @@ from typing import Callable
 
 from langchain_core.messages import AIMessage, AIMessageChunk, SystemMessage
 from langchain_core.runnables import RunnableConfig
-from langgraph.graph import END, START, MessagesState, StateGraph
+from langgraph.graph import END, START, StateGraph
 from langgraph.prebuilt import ToolNode
+
+from app.features.agent.lg.agent_state import AgentState
 
 TERMINAL_TOOLS = {"final_answer", "cannot_complete"}
 
@@ -30,7 +32,7 @@ def build_subagent(
     tools = tools or []
     model = llm.bind_tools(tools)
 
-    async def agent_node(state: MessagesState, config: RunnableConfig = None):
+    async def agent_node(state: AgentState, config: RunnableConfig = None):
         if prompt:
             msgs = [SystemMessage(content=prompt)] + state["messages"]
         else:
@@ -38,13 +40,13 @@ def build_subagent(
         response = await model.ainvoke(msgs, config=config)
         return {"messages": [response]}
 
-    def should_continue(state: MessagesState):
+    def should_continue(state: AgentState):
         last = state["messages"][-1]
         if isinstance(last, (AIMessage, AIMessageChunk)) and getattr(last, "tool_calls", None):
             return "tools"
         return END
 
-    def route_after_tools(state: MessagesState):
+    def route_after_tools(state: AgentState):
         for m in reversed(state["messages"]):
             if isinstance(m, (AIMessage, AIMessageChunk)):
                 tool_calls = getattr(m, "tool_calls", None) or []
@@ -54,7 +56,7 @@ def build_subagent(
         return "agent"
 
     tool_node = ToolNode(tools)
-    builder = StateGraph(MessagesState)
+    builder = StateGraph(AgentState)
     builder.add_node("agent", agent_node)
     builder.add_node("tools", tool_node)
     builder.add_edge(START, "agent")

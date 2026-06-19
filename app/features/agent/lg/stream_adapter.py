@@ -20,8 +20,6 @@ from langchain_core.messages import (
 
 from app.features.agent.state import stop_signals
 
-SELF_EVAL_NAME = "self_eval"
-
 
 # ---------------------------------------------------------------------------
 # Namespace helpers
@@ -79,9 +77,6 @@ def _emit_tool_steps(messages: list) -> list[dict]:
                     continue
                 args_str = json.dumps(tc.get("args") or {})
                 events.append({"data": json.dumps({"type": "step", "content": f"\U0001f527 {name}({args_str})"})})
-        elif isinstance(m, SystemMessage) and getattr(m, "name", None) == SELF_EVAL_NAME:
-            text = m.content if isinstance(m.content, str) else json.dumps(m.content)
-            events.append({"data": json.dumps({"type": "step", "content": text})})
     return events
 
 
@@ -95,7 +90,7 @@ def is_routing_relevant(msg: BaseMessage) -> bool:
     if isinstance(msg, HumanMessage):
         return True
     if isinstance(msg, SystemMessage):
-        return getattr(msg, "name", None) == SELF_EVAL_NAME
+        return False
     if isinstance(msg, ToolMessage):
         name = getattr(msg, "name", "") or ""
         return name == "dispatch" or name.startswith("transfer_back_to_")
@@ -170,6 +165,10 @@ async def pipe_langgraph_stream(
                 # Emit step events for tool calls in this node's output
                 for step_event in _emit_tool_steps(msgs):
                     yield step_event
+
+                # Emit audit_log entries as step events
+                for verdict in node_output.get("audit_log", []):
+                    yield {"data": json.dumps({"type": "step", "content": verdict})}
 
                 # Accumulate all messages for history
                 for m in msgs:
