@@ -19,6 +19,7 @@ from langchain_core.messages import (
 )
 
 from app.features.agent.state import stop_signals
+from app.features.agent.lg.utils import extract_text
 
 
 # ---------------------------------------------------------------------------
@@ -43,22 +44,6 @@ def _is_from_any_subagent(namespace) -> bool:
 # ---------------------------------------------------------------------------
 # Text extraction
 # ---------------------------------------------------------------------------
-
-
-def _extract_text(msg) -> str:
-    """Extract plain text from an AIMessage / AIMessageChunk."""
-    content = getattr(msg, "content", "")
-    if isinstance(content, str):
-        return content
-    if isinstance(content, list):
-        parts = []
-        for part in content:
-            if isinstance(part, str):
-                parts.append(part)
-            elif isinstance(part, dict) and part.get("type") == "text":
-                parts.append(part.get("text", ""))
-        return "".join(parts)
-    return ""
 
 
 # ---------------------------------------------------------------------------
@@ -146,7 +131,7 @@ async def pipe_langgraph_stream(
                 continue
             if not _is_from_supervisor(namespace) or _is_from_any_subagent(namespace):
                 continue
-            text = _extract_text(chunk)
+            text = extract_text(chunk)
             if not text:
                 continue
             yield {"data": json.dumps({"type": "chunk", "content": text})}
@@ -180,7 +165,7 @@ async def pipe_langgraph_stream(
                 if _is_from_supervisor(namespace) and not _is_from_any_subagent(namespace):
                     for m in msgs:
                         if isinstance(m, (AIMessage, AIMessageChunk)) and not getattr(m, "tool_calls", None):
-                            text = _extract_text(m)
+                            text = extract_text(m)
                             if text:
                                 last_supervisor_final_text = text
 

@@ -22,27 +22,12 @@ from app.features.agent.lg.model import get_gemini_chat_model
 from app.features.agent.lg.student_agent import make_student_agent
 from app.features.agent.lg.template_agent import make_template_agent
 from app.features.agent.lg.timetable_agent import make_timetable_agent
+from app.features.agent.lg.utils import extract_text
 
 
 # ---------------------------------------------------------------------------
 # Handoff message helpers
 # ---------------------------------------------------------------------------
-
-
-def _extract_text(msg) -> str:
-    """Extract plain text content from an AIMessage / AIMessageChunk."""
-    content = getattr(msg, "content", "")
-    if isinstance(content, str):
-        return content
-    if isinstance(content, list):
-        parts = []
-        for part in content:
-            if isinstance(part, str):
-                parts.append(part)
-            elif isinstance(part, dict) and part.get("type") == "text":
-                parts.append(part.get("text", ""))
-        return "".join(parts)
-    return ""
 
 
 def _create_handoff_back_messages(
@@ -86,7 +71,7 @@ def make_call_agent(agent, supervisor_name: str):
         if not reply_text:
             for m in reversed(messages):
                 if isinstance(m, (AIMessage, AIMessageChunk)) and not getattr(m, "tool_calls", None):
-                    text = _extract_text(m)
+                    text = extract_text(m)
                     if text:
                         reply_text = text
                         break
@@ -210,7 +195,7 @@ def build_custom_supervisor(agents: list, llm, prompt: str, supervisor_name: str
         )
 
         if not dispatch_call:
-            text = _extract_text(response)
+            text = extract_text(response)
             if not text:
                 # LLM went silent — deterministically relay last subagent replies
                 last_dispatch_idx = -1

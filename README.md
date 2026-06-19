@@ -105,6 +105,7 @@ app/
         timetable_tools.py → 5 timetable + slot-generation tools
       lg/
         agent_state.py   → AgentState (messages + audit_log — see Design decisions)
+        utils.py         → extract_text (shared text extraction helper)
         model.py         → get_gemini_chat_model (fresh ChatGoogle per call)
         handoff.py       → create_dispatch_tool, normalize_agent_name
         subagent.py      → build_subagent (ReAct graph: agent → tools → post_hook → terminal? → END/agent)
