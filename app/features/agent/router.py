@@ -159,12 +159,12 @@ async def execute_tool(
         case "generate_slot_availability":
             result = await generate_slot_availability(supabase, args.get("student_availability", ""))
             if side_effects is not None and isinstance(result, dict) and "slots" in result:
-                side_effects.append({"type": "slots_ready", "slots": result["slots"]})
+                side_effects.append({"type": "ui_action", "action": "slots_ready", "payload": {"slots": result["slots"]}})
             return result
         case "download_timetable_image":
             result = await download_timetable_image(supabase)
             if side_effects is not None and isinstance(result, dict) and "students" in result:
-                side_effects.append({"type": "download_schedule", "students": result["students"]})
+                side_effects.append({"type": "ui_action", "action": "download_schedule", "payload": {"students": result["students"]}})
             return result
         case _:
             return {"error": f"Unknown tool: {name}"}

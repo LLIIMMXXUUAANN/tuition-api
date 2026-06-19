@@ -1,7 +1,7 @@
 """LangGraph stream adapter — port of src/features/agent/lib/lg/stream-adapter.ts.
 
 Translates LangGraph's multi-mode event stream into the same SSE event types
-as the classic agent: chunk, step, done, stopped, error, download_schedule, slots_ready.
+as the classic agent: chunk, step, done, stopped, error, ui_action.
 """
 
 from __future__ import annotations
@@ -186,11 +186,9 @@ async def pipe_langgraph_stream(
                                 last_supervisor_final_text = text
 
         elif mode == "custom":
-            if isinstance(data, dict):
-                if "download_schedule" in data:
-                    yield {"data": json.dumps({"type": "download_schedule", "students": data["download_schedule"]})}
-                if "slots_ready" in data:
-                    yield {"data": json.dumps({"type": "slots_ready", "slots": data["slots_ready"]})}
+            if isinstance(data, dict) and "ui_action" in data:
+                ui = data["ui_action"]
+                yield {"data": json.dumps({"type": "ui_action", "action": ui["action"], "payload": ui["payload"]})}
 
         # Belt-and-suspenders stop check after each event
         if request_id and stop_signals.get(request_id, False):

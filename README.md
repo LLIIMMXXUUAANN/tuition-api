@@ -194,11 +194,18 @@ Each subagent has two terminal tools that end its turn immediately without an ex
 
 ### UI side-effect events (`execute_tool` + `side_effects` list)
 
-Two tools (`generate_slot_availability`, `download_timetable_image`) trigger frontend UI events — a download button appears in the chat after they run. These are emitted as SSE events of type `slots_ready` and `download_schedule`.
+Two tools (`generate_slot_availability`, `download_timetable_image`) trigger frontend UI events — a download button appears in the chat after they run. These are emitted as a generic `ui_action` SSE envelope:
+
+```json
+{"type": "ui_action", "action": "slots_ready",        "payload": {"slots": [...]}}
+{"type": "ui_action", "action": "download_schedule",   "payload": {"students": [...]}}
+```
+
+Using a single envelope type with an `action` discriminator means adding a new UI-trigger tool only requires a new `action` value — no new SSE event types, no new frontend handler branches.
 
 The coupling between "which tools trigger UI events" and the SSE emission is kept in `execute_tool`'s match block (the dispatch layer), not in the main generator loop. `execute_tool` accepts an optional `side_effects: list[dict] | None` parameter; the two special match cases append their event dict to the list if the result contains the expected key. The main loop creates the list, passes it to `run_tool`, and drains it with `yield` after all tools complete.
 
-This mirrors the LangGraph version's `config.writer` callback pattern (`tool_factories.py` calls `writer(...)` from inside the tool wrapper; the stream adapter forwards `custom` events as SSE). Both approaches avoid tool-name checks in the main streaming loop — adding a new UI-trigger tool only requires editing `execute_tool`, not the loop.
+This mirrors the LangGraph version's `config.writer` callback pattern (`tool_factories.py` calls `writer({"ui_action": {...}})` from inside the tool wrapper; the stream adapter forwards `custom` events as `ui_action` SSE). Both approaches avoid tool-name checks in the main streaming loop.
 
 ## API routes
 

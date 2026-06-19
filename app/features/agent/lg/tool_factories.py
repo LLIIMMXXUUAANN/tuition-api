@@ -415,7 +415,7 @@ def make_timetable_tools(supabase) -> list[StructuredTool]:
         try:
             writer = get_stream_writer()
             if writer and "slots" in result:
-                writer({"slots_ready": result["slots"]})
+                writer({"ui_action": {"action": "slots_ready", "payload": {"slots": result["slots"]}}})
         except Exception:
             pass
         return result
@@ -425,7 +425,7 @@ def make_timetable_tools(supabase) -> list[StructuredTool]:
         try:
             writer = get_stream_writer()
             if writer and "students" in result:
-                writer({"download_schedule": result["students"]})
+                writer({"ui_action": {"action": "download_schedule", "payload": {"students": result["students"]}}})
         except Exception:
             pass
         return result

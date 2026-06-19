@@ -80,7 +80,7 @@ This keeps HTTP semantics out of the service layer and prevents error handling f
 
 `app/features/agent/state.py` — module-level `stop_signals: dict[str, bool]` keyed by `request_id`; set by `POST /agent/stop` to signal in-flight requests to stop between tool rounds.
 
-Both endpoints emit the same SSE event types: `chunk`, `step`, `done`, `stopped`, `error`, `download_schedule`, `slots_ready`, and `history`/`lg_history`. A `requestId` can be used with `POST /agent/stop` to abort in-flight requests (via `app/features/agent/state.stop_signals` dict).
+Both endpoints emit the same SSE event types: `chunk`, `step`, `done`, `stopped`, `error`, `ui_action`, and `history`/`lg_history`. UI-trigger tools (`generate_slot_availability`, `download_timetable_image`) emit `{"type": "ui_action", "action": "<name>", "payload": {...}}` — a generic envelope so new UI-trigger tools only need a new `action` value, not a new event type. A `requestId` can be used with `POST /agent/stop` to abort in-flight requests (via `app/features/agent/state.stop_signals` dict).
 
 ### LangGraph multi-agent graph
 
