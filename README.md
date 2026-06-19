@@ -2,6 +2,20 @@
 
 FastAPI backend for the tuition management system. Handles Google Calendar/Drive integration, AI agent chat (classic Gemini loop + LangGraph multi-agent), timetable slot generation, and payment message templating.
 
+## Documentation
+
+| File | Covers |
+|---|---|
+| `README.md` | Setup, env vars, OAuth, commands, API routes |
+| `docs/decisions.md` | Non-obvious design decisions and the reasoning behind them |
+| `CLAUDE.md` | AI assistant guidance — architecture, DB schema, service layer |
+| `claude/agent.md` | Tool contract, system rules, SSE contract, LangGraph graph |
+| `claude/timetable.md` | Timetable routes, slot classification algorithm |
+| `claude/google.md` | Google OAuth, Calendar, Drive, cleanup, sync implementation |
+| `docs/agent-tools.md` | Full 18-tool reference (input / process / output for each tool) |
+
+All frontend documentation (features, UI, routing, components, decisions) is in the frontend repo — see `../Tuition/README.md` and `../Tuition/CLAUDE.md`.
+
 ## Requirements
 
 - Python 3.12+
@@ -10,13 +24,8 @@ FastAPI backend for the tuition management system. Handles Google Calendar/Drive
 ## Quick start
 
 ```bash
-# Install dependencies
 uv sync
-
-# Copy env and fill in values
-cp .env.example .env
-
-# Run dev server (auto-reload)
+cp .env.example .env   # fill in values
 uv run uvicorn app.main:app --reload
 ```
 
@@ -61,163 +70,34 @@ Tests hit real Supabase — set up `.env` before running.
 
 1. Enable Drive API + Calendar API in Google Cloud Console
 2. Add the admin email as a test user on the OAuth consent screen
-3. In Google Cloud Console → OAuth credentials → Authorised redirect URIs, add `http://localhost:3000/api/google/callback` (local) and your production URL (e.g. `https://lim-tuition.vercel.app/api/google/callback`)
-4. Set `GOOGLE_REDIRECT_URI` in `tuition-api/.env` to the Next.js callback URL (e.g. `http://localhost:3000/api/google/callback`)
+3. Add `http://localhost:3000/api/google/callback` (and your production URL) to Authorised redirect URIs in Google Cloud Console
+4. Set `GOOGLE_REDIRECT_URI` in `.env` to the Next.js callback URL
 5. Visit `http://localhost:3000/api/google/auth` as admin — Next.js fetches the OAuth URL from FastAPI and redirects the browser; after consent, Google redirects to Next.js `/api/google/callback` which saves the refresh token via FastAPI
 
-## Architecture
+**Avoid 7-day token expiry:** Google expires refresh tokens every 7 days for apps in Testing mode. Publish the app to **In production** in Google Cloud Console → APIs & Services → OAuth consent screen → Publish App. No verification is needed for a single-user app.
 
-```
-app/
-  main.py              → FastAPI app, CORS, router mounts
-  config.py            → Pydantic Settings (loaded from .env)
-  auth.py              → require_internal_secret dependency
-  types.py             → ClassSlot, Student, enums (StudentMode, StudentStatus, SlotState…)
-  features/
-    google/
-      router.py        → Calendar/Drive CRUD + OAuth setup routes
-      auth.py          → OAuth credentials, CSRF state tokens, token rotation
-      calendar.py      → Recurring Calendar events (create / find / update)
-      drive.py         → Student Drive folders + Meet docs
-      cleanup.py       → Bulk delete on student removal
-      sync.py          → Full sync for all active students
-    students/
-      router.py        → Student CRUD + portal lookup routes
-      service.py       → StudentNotFoundError, create_student, update_student, delete_student
-    payment/
-      router.py        → Payment message generation route
-      service.py       → build_payment_message wrapper
-    timetable/
-      router.py        → Timetable rules + buffer + slot generation routes
-      service.py       → TimetableValidationError, save_rules, save_buffer_mins
-    templates/
-      router.py        → Message template read/update routes
-      service.py       → TEMPLATE_META, template_meta(), get_template
-    agent/
-      router.py        → AI agent SSE — classic Gemini loop + LangGraph
-      schema.py        → TOOL_DECLARATIONS (18 tools) + SYSTEM_INSTRUCTION
-      eval.py          → self_eval — post-mutation DB verification (see Design decisions)
-      state.py         → stop_signals dict (keyed by request_id)
-      tools/
-        shared.py        → err_msg helper, SupabaseClient type alias
-        student_tools.py → 10 student + Google + portal tools
-        template_tools.py → 3 template + payment-message tools
-        timetable_tools.py → 5 timetable + slot-generation tools
-      lg/
-        agent_state.py   → AgentState (messages + audit_log — see Design decisions)
-        utils.py         → extract_text (shared text extraction helper)
-        model.py         → get_gemini_chat_model (fresh ChatGoogle per call)
-        handoff.py       → create_dispatch_tool, normalize_agent_name
-        subagent.py      → build_subagent (ReAct graph: agent → tools → post_hook → terminal? → END/agent)
-        tool_factories.py → make_student_tools / make_template_tools / make_timetable_tools (+ make_cannot_complete_tool + make_final_answer_tool appended to each)
-        student_agent.py → make_student_agent
-        template_agent.py → make_template_agent
-        timetable_agent.py → make_timetable_agent
-        supervisor.py    → make_supervisor, build_custom_supervisor
-        post_hooks.py    → make_student_post_hook, make_timetable_post_hook
-        stream_adapter.py → pipe_langgraph_stream, is_routing_relevant
-  shared/
-    db.py              → Async Supabase singleton (get_supabase)
-    utils.py           → DAYS, TIME_SLOTS, time_to_mins, format_fee, get_weekday_dates…
-    schema.py          → CamelResponse shared response class
-    gemini/
-      client.py        → Singleton google.genai.Client
-      slot_generation.py → run_gemini_slot_generation (structured JSON output)
-```
+If you see `invalid_grant` errors, re-visit `/api/google/auth` to re-authorize.
 
-### Service layer pattern
+## Email (magic link delivery)
 
-Each feature has a `service.py` that owns domain logic and raises typed exceptions:
+Magic link emails are sent via Gmail SMTP. Configure in Supabase Dashboard → Authentication → SMTP Settings:
 
-- **Domain exceptions** (e.g. `StudentNotFoundError`, `TimetableValidationError`) are raised by the service.
-- **HTTP routers** catch domain exceptions → re-raise as `HTTPException` with the appropriate status code.
-- **Agent tools** catch domain exceptions → return `{"error": str(err)}` (non-fatal; the LLM sees the error and can respond accordingly).
+| Field | Value |
+|---|---|
+| Host | `smtp.gmail.com` |
+| Port | `587` |
+| Sender | `limxuan520@gmail.com` |
+| Password | Gmail App Password (not the account password) |
 
-This keeps HTTP semantics out of the service layer and error handling out of tool implementations.
-
-## Design decisions
-
-### Self-evaluation after mutations (`eval.py`)
-
-After any agent tool round that includes a write operation, `self_eval` runs a read-back query against Supabase to verify the mutation landed:
-
-- `create_student` / `update_student` — SELECT by id, confirm row exists
-- `delete_student` — SELECT by id, confirm row is gone
-- `update_timetable_rules` — read back `timetable_rules`, compare to what was written
-- `update_buffer_mins` — read back `timetable_buffer_mins`, compare parsed integer
-
-**Per-round, not post-loop.** Both the classic Gemini loop and the LangGraph post-hooks run `self_eval` inside the tool-execution loop — once per tool round, covering all mutations from that round in parallel via `asyncio.gather`. If the agent updates two students in one round (the system prompt encourages batching), both are verified simultaneously, not just the last one.
-
-**Passive audit (Option A) — results are shown to the user, never fed back to the agent.** A successful verification appears as a `✓ verified in DB` step in the chat UI; a failure appears as `⚠ could not verify`. The agent never sees these verdicts and cannot retry based on them.
-
-This is the standard industry approach for interactive agents: transient infrastructure failures (a Supabase read racing against a just-completed write, a momentary network blip) should not trigger agent retries that risk duplicate writes. The human operator sees the audit result and can take corrective action if needed. Feeding verification failures back into the LLM loop treats a monitoring concern as an agent-control concern, which conflates two responsibilities and introduces the risk of write amplification.
-
-**LangGraph implementation — `audit_log` state field.** In the LangGraph backend, `post_hooks.py` writes verdicts to a separate `audit_log: Annotated[list[str], operator.add]` field in `AgentState` rather than injecting a `SystemMessage` into the message list. This keeps audit data structurally separated from conversation data — `audit_log` is never passed to any `model.invoke()` call regardless of which LLM is used. `stream_adapter.py` drains `audit_log` from each node's output in `updates` mode and emits the verdicts as SSE `step` events.
-
-### Why a custom supervisor instead of `langgraph-supervisor` (`supervisor.py`)
-
-The official `langgraph-supervisor` package was replaced with a custom `build_custom_supervisor` to fix two specific issues:
-
-1. **Echoing.** The official package echoes the handoff ToolMessage content (`"Successfully transferred back to supervisor"`) as the supervisor's reply instead of forwarding the subagent's actual answer. The custom supervisor puts the real reply in the ToolMessage and has the supervisor LLM relay it verbatim.
-
-2. **Double LLM call per supervisor turn.** The official package wraps the supervisor in `createReactAgent`, which always makes two LLM calls per turn (LLM → tool → LLM again to "check if done"). A routing supervisor makes exactly one decision per turn — the second call is pure waste. The custom `supervisor_node` calls the LLM once via `.astream()` and returns immediately.
-
-### LangGraph dispatch reliability
-
-Two structural invariants are enforced in code rather than relying solely on prompt rules:
-
-**Same-agent dedup.** The supervisor LLM is prompted to combine tasks for the same subagent into one `dispatch` entry (so the subagent can batch tool calls internally). When the LLM creates two separate entries for the same agent anyway, `supervisor_node` merges them: after normalising `handoff_list`, a `merged: dict[str, str]` groups entries by `agentName` and joins tasks with `\n`. Only then are `Send` commands emitted — guaranteeing one subagent invocation per agent regardless of LLM compliance.
-
-**UUID propagation.** `build_supervisor_prompt` instructs the supervisor to scan prior replies for `[student_id:NAME:UUID]` tokens and embed known UUIDs in task descriptions (e.g. `"Update Ang (id: 2dfa867c-...) fee to 60"`). `STUDENT_PROMPT` instructs the student_agent: if the task contains a UUID in parentheses, call `update_student` directly — no `search_students` needed. The student_agent also appends `[student_id:NAME:UUID]` tokens to every reply involving `get_student`, `create_student`, or `update_student`; these tokens flow into `lgHistory` via `is_routing_relevant`, making UUIDs available to the supervisor for subsequent turns.
-
-### Supervisor silent relay guarantee (`supervisor.py`)
-
-When a subagent completes its task and hands back to the supervisor, the supervisor must relay the subagent's reply verbatim. Three complementary layers enforce this:
-
-**`content=""` on handoff AIMessage.** `_create_handoff_back_messages` sets the AIMessage content to an empty string. The prior value (`"Transferring back to supervisor"`) was a model-role message that Gemini mistook for its own prior output — causing it to consider its turn "already done" and produce no new text.
-
-**Code fallback in `supervisor_node`.** After the LLM response is accumulated, if there is no `dispatch` call and no extracted text, `supervisor_node` scans backward through state messages for the most recent `transfer_back_to_*` ToolMessages (the subagent reply carriers) and joins their content as the reply. This deterministic relay path guarantees output even when the LLM goes silent — prompts define desired behaviour, code enforces invariants.
-
-**CRITICAL prompt rule.** `build_supervisor_prompt` ends with an explicit rule: every supervisor turn must produce either a `dispatch` call or non-empty text; empty output is never valid. The rule also instructs the LLM to output the last ToolMessage content verbatim as a fallback.
-
-The code fallback is the authoritative path (it never fails); the prompt rule reduces the frequency of the fallback being needed.
-
-### Subagent terminal tools (`tool_factories.py` + `subagent.py`)
-
-Each subagent has two terminal tools that end its turn immediately without an extra LLM summarization call:
-
-**`final_answer(text)`** — the normal exit. When the subagent has all necessary information, it calls `final_answer(text="...")` with its complete reply (tables, tokens, formatted content all inside `text`). The ToolMessage content becomes the handoff reply; no further LLM call is made.
-
-**`cannot_complete(reason)`** — the failure exit. When the subagent receives a task that doesn't match its available tools, it calls this instead of outputting vague free text. Visible in LangSmith traces as an explicit step; gives the supervisor a clear `"Cannot complete: ..."` message to relay.
-
-**Terminal routing in `subagent.py`:** `TERMINAL_TOOLS = {"final_answer", "cannot_complete"}`. After `tools` (or `post_hook`) runs, `route_after_tools` scans the last AIMessage's tool_calls — if any are in `TERMINAL_TOOLS`, it routes to `END` directly, bypassing the next `agent` LLM call. `should_continue` on the `agent` node is retained as a non-compliance safety net (if the LLM outputs no tool calls at all, it routes to `END` without entering `ToolNode`).
-
-**`make_call_agent` in `supervisor.py`:** reply extraction now first looks for a `final_answer` or `cannot_complete` ToolMessage; falls back to a free-text AIMessage for backward compatibility.
-
-**Savings:** one LLM call per subagent invocation — the extra "summarization" turn that previously rephrased tool results into natural language is eliminated.
-
-### UI side-effect events (`execute_tool` + `side_effects` list)
-
-Two tools (`generate_slot_availability`, `download_timetable_image`) trigger frontend UI events — a download button appears in the chat after they run. These are emitted as a generic `ui_action` SSE envelope:
-
-```json
-{"type": "ui_action", "action": "slots_ready",        "payload": {"slots": [...]}}
-{"type": "ui_action", "action": "download_schedule",   "payload": {"students": [...]}}
-```
-
-Using a single envelope type with an `action` discriminator means adding a new UI-trigger tool only requires a new `action` value — no new SSE event types, no new frontend handler branches.
-
-The coupling between "which tools trigger UI events" and the SSE emission is kept in `execute_tool`'s match block (the dispatch layer), not in the main generator loop. `execute_tool` accepts an optional `side_effects: list[dict] | None` parameter; the two special match cases append their event dict to the list if the result contains the expected key. The main loop creates the list, passes it to `run_tool`, and drains it with `yield` after all tools complete.
-
-This mirrors the LangGraph version's `config.writer` callback pattern (`tool_factories.py` calls `writer({"ui_action": {...}})` from inside the tool wrapper; the stream adapter forwards `custom` events as `ui_action` SSE). Both approaches avoid tool-name checks in the main streaming loop.
+To regenerate: Google Account → Security → search "App Passwords".
 
 ## API routes
 
 | Method | Path | Auth | Description |
 |---|---|---|---|
 | `GET` | `/` or `/health` | — | Health check |
-| `GET` | `/google/auth-url` | ✓ | Return Google OAuth consent URL (Next.js fetches this, then redirects the browser) |
-| `POST` | `/google/callback` | ✓ | Exchange OAuth code for refresh token and save it (called by Next.js after Google redirects) |
+| `GET` | `/google/auth-url` | ✓ | Return Google OAuth consent URL |
+| `POST` | `/google/callback` | ✓ | Exchange OAuth code for refresh token and save it |
 | `POST` | `/google/create-class-event` | ✓ | Create weekly recurring Calendar events |
 | `POST` | `/google/create-student-folder` | ✓ | Create Drive folder structure |
 | `POST` | `/google/update-class-event` | ✓ | Nuke-and-repave Calendar events + update Drive doc |
@@ -226,7 +106,7 @@ This mirrors the LangGraph version's `config.writer` callback pattern (`tool_fac
 | `GET` | `/students` | ✓ | List students (optional `?status=Active`) |
 | `GET` | `/students/portal-lookup` | ✓ | Find student by portal email |
 | `GET` | `/students/{id}` | ✓ | Get single student |
-| `POST` | `/students` | ✓ | Create student (auto Google setup if schedule provided) |
+| `POST` | `/students` | ✓ | Create student |
 | `PUT` | `/students/{id}` | ✓ | Update student (auto Calendar/Drive sync on schedule change) |
 | `DELETE` | `/students/{id}` | ✓ | Delete student + Google cleanup |
 | `POST` | `/payment/generate` | ✓ | Generate payment reminder message |
