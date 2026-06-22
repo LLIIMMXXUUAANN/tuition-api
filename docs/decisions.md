@@ -104,6 +104,42 @@ The frontend stores two localStorage keys: `agent_gemini_contents` (full Gemini 
 
 ---
 
+## Auth
+
+**Service identity: `X-Internal-Secret` instead of service account JWTs**
+
+FastAPI is a private internal service — not reachable from the internet. All callers must present an `X-Internal-Secret` header (verified by `require_internal_secret` in `auth.py`, applied at the router level via `dependencies=[Depends(...)]`). This is a simplified form of service identity: only the Next.js server knows the secret, so FastAPI knows any request carrying it came from the trusted frontend.
+
+The industry-standard pattern for service-to-service auth uses one of:
+- **OAuth2 client credentials flow** — the calling service exchanges a `client_id` + `client_secret` for a short-lived JWT from a dedicated auth server (Keycloak, Auth0, etc.)
+- **mTLS** — mutual TLS where both services present certificates; used internally at Google, Netflix, and Uber via a service mesh (Istio/Envoy)
+- **Self-signed service JWTs** — the calling service signs its own JWT with a private key; the receiving service verifies with the public key
+
+All three options give rotating, auditable, machine-identity credentials. `X-Internal-Secret` is a static shared secret — simpler but acceptable here because: (1) a single admin, no multi-tenancy; (2) FastAPI is not internet-exposed; (3) Supabase RLS enforces data-access rules independently if the secret were ever compromised.
+
+**When to upgrade:** introduce a second frontend (mobile app, third-party integration) or expose FastAPI on a public endpoint. At that point, replace `X-Internal-Secret` with OAuth2 client credentials so each caller has its own rotating identity.
+
+---
+
+**User identity stops at Next.js — FastAPI has no per-user auth**
+
+The Supabase user JWT exists in the browser cookie and is verified by Next.js (`requireTutor()` calls `supabase.auth.getUser()` + the `is_tutor()` RPC). The JWT is never forwarded to FastAPI — FastAPI receives only `X-Internal-Secret` and has no visibility into which user made the request.
+
+In the full industry pattern, the Next.js proxy would also forward `Authorization: Bearer <user-jwt>`, and FastAPI would verify it independently using the Supabase JWT secret (HS256, verifiable with `python-jose` without a Supabase network call). This gives FastAPI the caller's `sub`, `email`, and `role` for per-user logging, auditing, and fine-grained access control.
+
+The two caller types and their auth in the full pattern:
+
+| Caller | How it reaches FastAPI | User identity | Service identity |
+|---|---|---|---|
+| Browser (mutations) | Next.js catch-all proxy | User JWT (`Authorization: Bearer`) | `X-Internal-Secret` |
+| Server Component (reads) | `fetchFastAPI` directly | Service account JWT | `X-Internal-Secret` |
+
+This project omits user JWT forwarding and uses no service account JWT for server-side calls because: (1) single tutor, no per-user audit requirement; (2) Supabase does not issue service account tokens — implementing service JWTs would require an additional auth server; (3) all Server Component calls are reads, already protected by Next.js middleware before the component renders.
+
+**When to upgrade:** add a second admin, require per-user audit logs, or expose any write endpoint to a non-Next.js caller. Forward the Supabase JWT in the proxy and add `require_jwt` to mutation endpoints.
+
+---
+
 ## Not implemented (future reference)
 
 **Prompt caching**
