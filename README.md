@@ -78,6 +78,24 @@ Tests hit real Supabase — set up `.env` before running.
 
 If you see `invalid_grant` errors, re-visit `/api/google/auth` to re-authorize.
 
+## Keeping the Render instance warm (free tier)
+
+Render's free tier spins down after 15 minutes of inactivity, causing 50+ second cold starts. A cron job on [cron-job.org](https://cron-job.org) (free) pings the health endpoint every 10 minutes to prevent this.
+
+**Setup:**
+1. Sign up at cron-job.org
+2. Create a new cron job:
+   - **URL**: `https://tuition-api-uqq4.onrender.com/health`
+   - **Schedule**: every 10 minutes
+   - **Method**: GET
+3. Enable it
+
+The `/health` endpoint requires no auth so the ping always succeeds.
+
+**When to skip this:** upgrade to Render Starter ($7/month) for a persistent instance that never sleeps.
+
+---
+
 ## Email (magic link delivery)
 
 Magic link emails are sent via Gmail SMTP. Configure in Supabase Dashboard → Authentication → SMTP Settings:
