@@ -20,6 +20,7 @@ from langchain_core.messages import (
 
 from app.features.agent.state import stop_signals
 from app.features.agent.lg.utils import extract_text
+from app.features.agent.utils import TRAILING_BUFFER, extract_student_tokens
 
 
 # ---------------------------------------------------------------------------
@@ -102,6 +103,7 @@ async def pipe_langgraph_stream(
     streamed_any_text = False
     last_supervisor_final_text = ""
     accumulated_map: dict[str, BaseMessage] = {}
+    trailing = ""
 
     async for raw in stream:
         # Events arrive as (namespace, mode, data) or (mode, data) tuples
@@ -129,7 +131,10 @@ async def pipe_langgraph_stream(
             text = extract_text(chunk)
             if not text:
                 continue
-            yield {"data": json.dumps({"type": "chunk", "content": text})}
+            trailing += text
+            if len(trailing) > TRAILING_BUFFER:
+                flush, trailing = trailing[:-TRAILING_BUFFER], trailing[-TRAILING_BUFFER:]
+                yield {"data": json.dumps({"type": "chunk", "content": flush})}
             streamed_any_text = True
 
         elif mode == "updates":
@@ -175,10 +180,20 @@ async def pipe_langgraph_stream(
             yield {"data": json.dumps({"type": "stopped"})}
             return
 
-    # Fallback: if supervisor never streamed text, emit the captured final text
-    if not streamed_any_text:
+    # Flush trailing buffer — extract tokens from the tail
+    if streamed_any_text:
+        cleaned, students = extract_student_tokens(trailing)
+        if students:
+            yield {"data": json.dumps({"type": "ui_action", "action": "student_links", "payload": {"studentLinks": students}})}
+        if cleaned:
+            yield {"data": json.dumps({"type": "chunk", "content": cleaned})}
+    else:
+        # Fallback: supervisor never streamed — post-process the captured final text
         fallback = last_supervisor_final_text or "Sorry, I could not generate a response. Please try again."
-        yield {"data": json.dumps({"type": "chunk", "content": fallback})}
+        cleaned, students = extract_student_tokens(fallback)
+        if students:
+            yield {"data": json.dumps({"type": "ui_action", "action": "student_links", "payload": {"studentLinks": students}})}
+        yield {"data": json.dumps({"type": "chunk", "content": cleaned or fallback})}
 
     # Call the on_complete callback (emits lg_history) before done
     accumulated = list(accumulated_map.values())

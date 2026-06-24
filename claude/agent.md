@@ -51,7 +51,7 @@ Fine-grained reads, coarse-grained writes. Read tools (`search_students`, `get_s
 3. Ask for missing required fields (`mode`, `fee_per_hour`) before calling `create_student`
 4. Multiple search matches → list and ask which student
 5. No search results for update/delete → say so, offer to create instead
-6. After create/update → append one `[student_id:NAME:UUID]` token per affected student at the end of the reply (frontend renders a "View NAME →" link per token). Example for two students: `[student_id:Lynn:uuid-1] [student_id:Ang:uuid-2]`
+6. After create/update → append one `[student_id:NAME:UUID]` token per affected student at the end of the reply. Example: `[student_id:Lynn:uuid-1] [student_id:Ang:uuid-2]`. The backend (`router.py` / `stream_adapter.py`) intercepts these tokens via a trailing buffer, strips them from the text stream, and emits a `ui_action` SSE event (`action: "student_links"`) to the frontend — the raw tokens never reach the browser.
 7. Formatting rules: tables for lists, bold labels for single records, skip null/empty fields, render Meet/Drive as markdown links, blockquote for notes/homework, `list_students` for roster queries
 8. `sync_all_students` requires explicit confirmation before calling
 9. Delete confirmation must mention Google Calendar/Drive removal

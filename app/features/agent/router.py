@@ -27,6 +27,7 @@ from app.features.agent.lg.stream_adapter import is_routing_relevant, pipe_langg
 from app.features.agent.lg.supervisor import make_supervisor
 from app.features.agent.schema import SYSTEM_INSTRUCTION, TOOL_DECLARATIONS
 from app.features.agent.state import stop_signals
+from app.features.agent.utils import TRAILING_BUFFER, extract_student_tokens
 from app.shared.schema import CamelResponse
 from app.features.agent.tools import (
     create_student,
@@ -216,6 +217,7 @@ async def agent_chat(request: Request):
 
                 round_text = ""
                 round_fn_calls: list = []
+                trailing = ""
 
                 async for chunk in await gemini_client.aio.models.generate_content_stream(
                     model="gemini-2.5-flash",
@@ -235,7 +237,10 @@ async def agent_chat(request: Request):
                         elif hasattr(part, "text") and part.text:
                             round_text += part.text
                             if len(round_fn_calls) == 0:
-                                yield {"data": json.dumps({"type": "chunk", "content": part.text})}
+                                trailing += part.text
+                                if len(trailing) > TRAILING_BUFFER:
+                                    flush, trailing = trailing[:-TRAILING_BUFFER], trailing[-TRAILING_BUFFER:]
+                                    yield {"data": json.dumps({"type": "chunk", "content": flush})}
 
                 # Rebuild model content from accumulated round
                 model_parts: list[types.Part] = []
@@ -253,6 +258,11 @@ async def agent_chat(request: Request):
 
                 if not round_fn_calls:
                     got_reply = True
+                    cleaned, students = extract_student_tokens(trailing)
+                    if students:
+                        yield {"data": json.dumps({"type": "ui_action", "action": "student_links", "payload": {"studentLinks": students}})}
+                    if cleaned:
+                        yield {"data": json.dumps({"type": "chunk", "content": cleaned})}
                     break
 
                 named_calls = [fc for fc in round_fn_calls if fc.name]
