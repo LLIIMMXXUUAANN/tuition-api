@@ -137,3 +137,41 @@ Both `POST /agent/chat` (classic) and `POST /agent/lg/chat` (LangGraph) emit the
 **Classic loop (`router.py`):** `execute_tool` accepts an optional `side_effects: list[dict]` parameter; the two special match cases (`generate_slot_availability`, `download_timetable_image`) append their `ui_action` dict to the list if the result contains the expected key. The main loop drains it with `yield` after all tools in a round complete.
 
 **LangGraph (`tool_factories.py` + `stream_adapter.py`):** `generate_slot_availability` and `download_timetable_image` call `config.writer({"ui_action": {...}})` inside the tool wrapper; `pipe_langgraph_stream` forwards `custom` mode events as `ui_action` SSE events.
+
+---
+
+## Framework choices and trade-offs
+
+### Single agent: raw SDK vs LangChain
+
+The classic agent (`router.py`) uses the **raw Google GenAI Python SDK** directly — manual round loop, manual tool call parsing, manual function response construction. This is the industry-standard choice for single agents: full control, easy debugging, no abstraction overhead. Every line of the loop is visible and owned.
+
+LangChain is more common in prototypes and teams that need rapid provider switching, but for a single agent the abstraction rarely pays for itself. Production teams at major AI labs (Anthropic, OpenAI, Google) use their own raw SDKs internally.
+
+**Switching cost if using raw SDK:** changing provider requires rewriting the client call and message format conversion (`_to_content`, `_content_to_dict`, tool response construction) — roughly a day of work. The loop logic itself is provider-agnostic and stays unchanged.
+
+### Multi-agent: why LangGraph
+
+The LangGraph path uses `langchain-google-genai` (`ChatGoogleGenerativeAI`) behind LangChain's `BaseChatModel` interface. This was chosen for multi-agent orchestration because:
+
+- Parallel dispatch via `Send` fan-out is built-in
+- State accumulation (`add_messages`, `operator.add`) is handled by the graph runner
+- Switching provider is one line — `ChatGoogleGenerativeAI` → `ChatAnthropic` → `ChatOpenAI` — all implement the same `BaseChatModel` interface; graph, tools, stream adapter unchanged
+
+**Switching cost if using LangChain:** change the import and class name in `lg/model.py` — ~30 minutes regardless of provider.
+
+### Multi-agent framework landscape (as of 2025)
+
+| Framework | Abstraction | Debugging | Vendor lock | Production use |
+|---|---|---|---|---|
+| **CrewAI** | Very high (role/goal/backstory) | Hard | No | Low — popular for demos, rare in production |
+| **LangGraph** | Medium (graph nodes + edges) | Medium | No | High today, losing ground |
+| **AutoGen** (Microsoft) | Medium (conversational agents) | Hard | No | Research/academic, less production |
+| **OpenAI Agents SDK** | Low (Agent + handoff + Runner) | Easy | OpenAI only | Growing fast among OpenAI shops |
+| **Raw SDK** | None | Easy | Per-provider | Where mature teams end up |
+
+The typical industry trajectory: **CrewAI demo → LangGraph prototype → raw SDK production.** Teams that started with raw SDK never needed to rewrite.
+
+LangGraph's graph abstraction helps for simple linear flows but fights you on complex dynamic routing — the custom supervisor in `lg/supervisor.py` (manual `Command` + `Send` construction) is evidence of working around the abstraction rather than with it. The alternative would be a plain `asyncio.gather` over subagent coroutines, which is essentially what LangGraph executes under the hood.
+
+LangGraph remains the right choice here because: (1) the LangGraph path is already built and working, (2) provider portability is a real benefit, (3) the use case (3 subagents, parallel dispatch, simple routing) does not push against LangGraph's limits.
