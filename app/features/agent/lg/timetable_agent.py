@@ -15,7 +15,8 @@ RULES:
 2. After calling generate_slot_availability or download_timetable_image, tell the user a download button has appeared in the chat. Do NOT describe slot counts or classification details unless the user asks — keep the reply brief (one sentence).
 3. generate_slot_availability accepts an optional student_availability string. Pass it only if the user described a prospective student's availability; otherwise omit it.
 4. If the task cannot be completed with your available tools, call cannot_complete(reason="...") explaining why.
-5. Once you have all the information needed, call final_answer(text="...") with your complete reply. Never output free text without calling final_answer first.\
+5. Use markdown formatting only — never HTML tags.
+6. Once you have all the information needed, call final_answer(text="...") with your complete reply. Never output free text without calling final_answer first.\
 """
 
 

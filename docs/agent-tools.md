@@ -9,7 +9,7 @@ All 18 shared tools available to the AI agent at `/admin/agent`. The same tool l
 
 Tool implementations live in `app/features/agent/tools/` (split by domain: `student_tools.py`, `template_tools.py`, `timetable_tools.py`) and are called by both backends.
 
-**Both backends are stateless** — history is sent from the client on every request. The server returns the updated history in a `{ type: 'history' }` / `{ type: 'lg_history' }` SSE event before `done`. For LangGraph, `lg_history` contains only routing-level messages — subagent-internal tool call pairs are stripped server-side by `is_routing_relevant` before emission. See `docs/decisions.md` for the full rationale.
+**Conversation history is persisted server-side** in Supabase (`agent_conversations` + `agent_messages` tables). The frontend calls `GET /conversations/current` on mount to load history — no localStorage. For LangGraph, only routing-level messages are stored in `lg_contents` — subagent-internal tool call pairs are stripped by `is_routing_relevant`. See `docs/decisions.md` for the full rationale.
 
 **LangSmith tracing** — LangGraph runs are traced automatically when `LANGCHAIN_TRACING=true` and `LANGSMITH_API_KEY` are set. Traces appear in the LangSmith web UI under the `LANGSMITH_PROJECT` name (default: `tuition-agent`). Classic-mode runs are not traced. See `.env.example` for the full set of LangSmith env vars.
 
@@ -434,7 +434,7 @@ Calculate monthly tuition fee revenue across all active students.
 ### Process
 
 1. Fetches all active students: `id`, `name`, `fee_per_hour`, `class_schedule`
-2. For each student, groups slots by day via `groupSlotsByDay`, then calls `getWeekdayDates` to find every occurrence of that weekday in the target month
+2. For each student, groups slots by day, then calls `get_weekday_dates` to find every occurrence of that weekday in the target month
 3. Fee per student = Σ (session_count × hours_per_session × fee_per_hour) across all days
 4. Raw fees are tracked in a parallel array before rounding to avoid per-student accumulation errors; the total is rounded once at the end
 
@@ -545,8 +545,8 @@ Generate a ready-to-send payment reminder message for a student. Calculates sess
 3. Validates student is Active
 4. Delegates all calculation and message building to `build_payment_message()` from `app/features/payment/service.py`
 
-`buildPaymentMessage()` internally:
-- Groups slots by day; calls `getWeekdayDates` for each day to find every occurrence in the target month
+`build_payment_message()` internally:
+- Groups slots by day; calls `get_weekday_dates` for each day to find every occurrence in the target month
 - Collects all session dates, sorts them, computes `sessionFeeTotal`
 - Resolves `recipient` — uses `contact_person` if set and not `"-"`, otherwise falls back to `name`
 - **Template 1:** `"Hi {recipient}, … {N} sessions in {month} ({dates}), bringing the total to RM{fee}. Thank you 😄"`

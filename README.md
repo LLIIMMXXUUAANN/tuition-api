@@ -138,5 +138,8 @@ To regenerate: Google Account → Security → search "App Passwords".
 | `POST` | `/agent/chat` | ✓ | Classic Gemini agent SSE stream |
 | `POST` | `/agent/lg/chat` | ✓ | LangGraph multi-agent SSE stream |
 | `POST` | `/agent/stop` | ✓ | Abort an in-flight agent request |
+| `GET` | `/agent/conversations/current` | ✓ | Return (or create) the single latest conversation + its messages |
+| `GET` | `/agent/conversations/{id}/messages` | ✓ | Fetch messages for a known conversation ID |
+| `POST` | `/agent/conversations/{id}/clear` | ✓ | Delete all messages + reset LLM history columns |
 
 ✓ = requires `X-Internal-Secret` header

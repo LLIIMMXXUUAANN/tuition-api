@@ -40,7 +40,7 @@ Two structural invariants are enforced in code rather than relying solely on pro
 
 **Same-agent dedup.** When the LLM creates two separate `dispatch` entries for the same agent, `supervisor_node` merges them: after normalising `handoff_list`, a `merged: dict[str, str]` groups entries by `agentName` and joins tasks with `\n`. Only then are `Send` commands emitted — guaranteeing one subagent invocation per agent regardless of LLM compliance.
 
-**UUID propagation.** `build_supervisor_prompt` instructs the supervisor to scan prior replies for `[student_id:NAME:UUID]` tokens and embed known UUIDs in task descriptions (e.g. `"Update Ang (id: 2dfa867c-...) fee to 60"`). `STUDENT_PROMPT` instructs the student_agent: if the task contains a UUID in parentheses, call `update_student` directly without a `search_students` round. The student_agent appends `[student_id:NAME:UUID]` tokens to every reply involving `get_student`, `create_student`, or `update_student`; these flow into `lgHistory` via `is_routing_relevant`, making UUIDs available for subsequent turns.
+**UUID propagation.** `build_supervisor_prompt` instructs the supervisor to scan prior replies for `[student_id:NAME:UUID]` tokens and embed known UUIDs in task descriptions (e.g. `"Update Ang (id: 2dfa867c-...) fee to 60"`). `STUDENT_PROMPT` instructs the student_agent: if the task contains a UUID in parentheses, call `update_student` directly without a `search_students` round. The student_agent appends `[student_id:NAME:UUID]` tokens to every reply involving `get_student`, `create_student`, or `update_student`; these flow into the persisted LG history via `is_routing_relevant`, making UUIDs available for subsequent turns.
 
 ---
 
@@ -85,7 +85,7 @@ The coupling between "which tools trigger UI events" and SSE emission is in `exe
 
 **Why LangGraph history omits subagent-internal tool calls (`is_routing_relevant`)**
 
-`lgHistory` (stored client-side, sent on every request) contains only routing-level messages. Subagent-internal tool call pairs (e.g. `search_students → result → get_student → result` inside `student_agent`) are stripped by `is_routing_relevant` before the `lg_history` SSE event is emitted.
+`lg_contents` (stored server-side in `agent_conversations`, restored at the start of each request) contains only routing-level messages. Subagent-internal tool call pairs (e.g. `search_students → result → get_student → result` inside `student_agent`) are stripped by `is_routing_relevant` before `on_complete` saves them.
 
 1. **They are ephemeral implementation detail, not conversation state.** The supervisor dispatched a task and received a conclusion. The specific DB queries are no longer load-bearing for future routing decisions.
 2. **Including them grows history proportionally to tool call depth.** A single subagent invocation can involve 3–6 tool call/response pairs — quickly increasing the token cost of every subsequent request.
@@ -96,11 +96,19 @@ The coupling between "which tools trigger UI events" and SSE emission is in `exe
 
 ---
 
-**Why the agent is stateless (no LangGraph checkpointer)**
+**Why the agent uses custom persistence instead of a LangGraph checkpointer**
 
-Both backends send conversation history from the client on every request rather than persisting it server-side via a checkpointer. The primary reason: there is only one admin with no concurrent sessions. Stateful checkpointing (`MemorySaver`, a Postgres checkpointer, etc.) is designed for many users maintaining long-running threads that need to survive browser refreshes and be resumed across devices. For a single user whose history already lives in localStorage and is sent back on every request, the infrastructure overhead — external store, thread ID management, TTL/cleanup — provides no benefit.
+Conversation history is persisted server-side in Supabase (`agent_conversations` + `agent_messages`) rather than via a LangGraph checkpointer (`MemorySaver`, a Postgres checkpointer, etc.). The frontend stores no history — it calls `GET /conversations/current` on mount to receive both the conversation ID and its messages in one round trip.
 
-The frontend stores two localStorage keys: `agent_gemini_contents` (full Gemini `Content[]` for the classic loop) and `agent_lg_contents` (routing-level LangGraph messages, filtered by `is_routing_relevant`). Both are sent back on every request to reconstruct conversation context.
+LangGraph checkpointers are designed for managing many concurrent threads, each with its own `thread_id`, TTL, and cleanup lifecycle. For a single admin with one active conversation at a time, that infrastructure adds complexity without benefit.
+
+The custom persistence layer (`persistence.py`) also enables features that checkpointers don't provide out of the box:
+- **Pre-insert write-ahead pattern** — agent row inserted with `is_error=True` before SSE starts; guarantees the row exists even if the user reloads mid-stream
+- **`pre_turn_llm_snapshot`** on user message rows — full LLM history frozen at each turn boundary, enabling server-side retry (no client history needed) and edit (truncate + replay from snapshot)
+- **Cross-device access** — any device calling `GET /conversations/current` gets the same history, since there is no localStorage dependency
+- **`clear_conversation`** — wipes messages and resets LLM history columns on the same row, keeping the conversation ID stable
+
+**When to add `AsyncPostgresSaver`:** if human-in-the-loop approval flows are needed (e.g. agent proposes a schedule change, tutor clicks Approve before it's committed), add `AsyncPostgresSaver` pointing at Supabase alongside the existing tables — not replacing them. The checkpointer handles graph resumption from a specific node boundary; `agent_messages` stays as-is for the chat UI. The two layers coexist independently.
 
 ---
 

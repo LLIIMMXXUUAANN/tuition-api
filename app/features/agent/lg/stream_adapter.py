@@ -7,7 +7,7 @@ as the classic agent: chunk, step, done, stopped, error, ui_action.
 from __future__ import annotations
 
 import json
-from typing import AsyncGenerator, AsyncIterable, Callable, Optional
+from typing import AsyncGenerator, AsyncIterable, Awaitable, Callable, Optional
 
 from langchain_core.messages import (
     AIMessage,
@@ -94,7 +94,7 @@ def is_routing_relevant(msg: BaseMessage) -> bool:
 async def pipe_langgraph_stream(
     stream: AsyncIterable,
     request_id: Optional[str] = None,
-    on_complete: Optional[Callable] = None,
+    on_complete: Optional[Callable[..., Awaitable[None]]] = None,
 ) -> AsyncGenerator[dict, None]:
     """Async generator that translates a LangGraph stream into SSE event dicts.
 
@@ -195,10 +195,9 @@ async def pipe_langgraph_stream(
             yield {"data": json.dumps({"type": "ui_action", "action": "student_links", "payload": {"studentLinks": students}})}
         yield {"data": json.dumps({"type": "chunk", "content": cleaned or fallback})}
 
-    # Call the on_complete callback (emits lg_history) before done
+    # Call the on_complete callback (saves to DB) before done
     accumulated = list(accumulated_map.values())
     if on_complete:
-        async for event in on_complete(accumulated):
-            yield event
+        await on_complete(accumulated)
 
     yield {"data": json.dumps({"type": "done"})}

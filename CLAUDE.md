@@ -65,8 +65,9 @@ app/
       router.py        → Message template read/update routes
       service.py       → TEMPLATE_META, template_meta(), get_template
     agent/
-      router.py        → AI agent SSE — classic Gemini loop + LangGraph
+      router.py        → AI agent SSE — classic Gemini loop + LangGraph + conversation endpoints
       schema.py        → TOOL_DECLARATIONS (18 tools) + SYSTEM_INSTRUCTION
+      persistence.py   → conversation + message DB helpers (get_or_create_conversation, clear_conversation, pre_insert_agent_message, insert_user_message, update_agent_message)
       eval.py          → self_eval — post-mutation DB verification
       state.py         → stop_signals dict (keyed by request_id)
       tools/
@@ -121,8 +122,10 @@ All routers require the `X-Internal-Secret` header (checked by `app/auth.py`).
 
 ### Database schema
 
-Four tables in the `public` schema:
+Six tables in the `public` schema:
 
+- **`agent_conversations`** — one permanent row. Holds `lg_contents` (JSONB) and `gemini_contents` (JSONB) — the LLM-level history used to reconstruct context at the start of each request. RLS: `is_tutor()` only.
+- **`agent_messages`** — one row per message. Columns: `conversation_id`, `role` (`user` | `agent`), `content`, `steps` (JSONB array), `is_error` (bool), `students` (JSONB), `schedule_students` (JSONB), `slot_data` (JSONB), `pre_turn_llm_snapshot` (JSONB — full LLM history before this turn, used for retry/edit), `created_at`. RLS: `is_tutor()` only.
 - **`students`** — one row per student. `class_schedule` is a `jsonb` column storing `ClassSlot[]` (array of `{ day, start, end }`). `access_emails text[]` lists emails that can log in to the student portal. `calendar_event_ids text[]` stores one Google Calendar event ID per class slot, positionally matched to `class_schedule` (index 0 = event that owns the Meet conference). `status` (`Active` | `On Hold` | `Completed`) is the sole active/inactive flag. `today_homework` is a `text` column (multi-line). RLS: admin has full access; students can only SELECT their own row. Backend always uses the service-role key and bypasses RLS.
 - **`templates`** — one row per template, keyed by text `id` (e.g. `payment`, `review_request1`, `first_approach`). `content` is upserted on Save.
 - **`tutors`** — one row per tutor email. Accessed only via SECURITY DEFINER functions.

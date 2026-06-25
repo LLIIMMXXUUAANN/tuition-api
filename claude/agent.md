@@ -40,7 +40,35 @@ Fine-grained reads, coarse-grained writes. Read tools (`search_students`, `get_s
 - `get_timetable_settings` fetches `timetable_rules` and `timetable_buffer_mins` from `settings` in parallel; returns `{ rules, bufferMins }` (bufferMins defaults to 15 if unset)
 - `update_timetable_rules` / `update_buffer_mins` upsert into `settings` table; `update_buffer_mins` validates 0–60 before writing
 - `generate_slot_availability` fetches rules, buffer, and all active students' `class_schedule` in a single `asyncio.gather`; delegates to `run_gemini_slot_generation` from `app/shared/gemini/slot_generation.py`; returns `{ error }` if no rules are configured
-- `download_timetable_image` fetches active students' `name` and `class_schedule` ordered by name; returns `{ students }` which the router emits as a `ui_action` SSE event — the frontend renders the PNG client-side
+- `download_timetable_image` fetches active students' `name` and `class_schedule` ordered by name; returns `{ students }` which the router emits as a `ui_action` SSE event
+
+---
+
+## Persistence (`app/features/agent/persistence.py`)
+
+All conversation state lives in Supabase. Two tables (both RLS-protected via `is_tutor()`):
+- **`agent_conversations`** — one row per conversation, holds `lg_contents` and `gemini_contents` (JSONB) for LLM history
+- **`agent_messages`** — one row per message, holds `role`, `content`, `steps`, `is_error`, `students`, `schedule_students`, `slot_data`, `pre_turn_llm_snapshot` (JSONB), and `created_at`
+
+**Key functions:**
+- `get_or_create_conversation(supabase)` — fetches the most recent conversation row (or creates one if the table is empty); returns `{ id, messages }` in a single call. Used by `GET /conversations/current`.
+- `clear_conversation(supabase, conversation_id)` — deletes all messages and resets `lg_contents`/`gemini_contents` to null, keeping the same conversation row. Used by `POST /conversations/{id}/clear`.
+- `pre_insert_agent_message(supabase, conversation_id)` — **write-ahead pattern**: inserts a placeholder agent row with `is_error=True` and empty content before any SSE byte is sent. Guarantees the row exists in DB even if the user reloads mid-stream. `on_complete`/`finally` then UPDATE this row with real content.
+- `insert_user_message(supabase, conversation_id, content, pre_turn_llm_snapshot)` — inserts a user message with the full LLM history snapshot frozen at that point. Used by retry/edit to restore prior context without client-side history management.
+- `update_agent_message` / `insert_agent_message` — used by save paths; `update_agent_message` flips `is_error` to `False` on success.
+- `_row_to_message(row)` — maps DB columns to the JSON shape sent to the frontend: `isError`, `steps`, `students`, `scheduleStudents`, `slotData`, `timestamp`.
+
+**`effective_id` pattern:** all save paths use `effective_id = agent_msg_id_to_update or pre_agent_id` — cleanly unifies retry (existing row) and normal-send (pre-inserted row) without duplicating the update/insert branch logic.
+
+---
+
+## Conversation management endpoints (`app/features/agent/router.py`)
+
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/conversations/current` | Returns (or creates) the single latest conversation + its messages |
+| `GET` | `/conversations/{id}/messages` | Fetch messages for a known conversation ID (used by `shouldReloadRef` after a turn) |
+| `POST` | `/conversations/{id}/clear` | Delete all messages + reset LLM history columns |
 
 ---
 
@@ -51,8 +79,8 @@ Fine-grained reads, coarse-grained writes. Read tools (`search_students`, `get_s
 3. Ask for missing required fields (`mode`, `fee_per_hour`) before calling `create_student`
 4. Multiple search matches → list and ask which student
 5. No search results for update/delete → say so, offer to create instead
-6. After create/update → append one `[student_id:NAME:UUID]` token per affected student at the end of the reply. Example: `[student_id:Lynn:uuid-1] [student_id:Ang:uuid-2]`. The backend (`router.py` / `stream_adapter.py`) intercepts these tokens via a trailing buffer, strips them from the text stream, and emits a `ui_action` SSE event (`action: "student_links"`) to the frontend — the raw tokens never reach the browser.
-7. Formatting rules: tables for lists, bold labels for single records, skip null/empty fields, render Meet/Drive as markdown links, blockquote for notes/homework, `list_students` for roster queries
+6. After create/update → append one `[student_id:NAME:UUID]` token per affected student at the end of the reply. Example: `[student_id:Lynn:uuid-1] [student_id:Ang:uuid-2]`. `router.py` / `stream_adapter.py` intercepts these tokens via a trailing buffer, strips them from the text stream, and emits a `ui_action` SSE event (`action: "student_links"`) — the raw tokens never reach the browser.
+7. Formatting rules: use markdown only (never HTML tags); tables for lists, bold labels for single records, skip null/empty fields, render Meet/Drive as markdown links, blockquote for notes/homework
 8. `sync_all_students` requires explicit confirmation before calling
 9. Delete confirmation must mention Google Calendar/Drive removal
 10. `get_schedule`: resolve "today"/"tomorrow" using injected date; format as Name | Time table (12-hour); say "No classes on [day]" if empty
@@ -81,11 +109,12 @@ Key additions and overrides vs. the classic agent rules:
 
 ## Classic loop details (`app/features/agent/router.py`)
 
-- Current MYT date is prepended to `SYSTEM_INSTRUCTION` at request time via Python's `datetime` + `pytz` (`pytz.timezone("Asia/Kuala_Lumpur")`) so the LLM can resolve "today"/"tomorrow" before calling `get_schedule` — the injected string is formatted as `"Today is {weekday}, {date} (Malaysia Time)."`.
+- Current MYT date is prepended to `SYSTEM_INSTRUCTION` at request time via Python's `datetime` + `pytz` (`pytz.timezone("Asia/Kuala_Lumpur")`) so the LLM can resolve "today"/"tomorrow" before calling `get_schedule`.
 - Runs up to 10 rounds. Tool-calling rounds execute all function calls from the current round in parallel via `asyncio.gather`; each call emits a `step` SSE event immediately. The final text-only round streams `chunk` events token by token.
 - Soft stop check at the start of each round: if `stop_signals.get(request_id)` is set, breaks cleanly without interrupting a mid-tool call.
 - `MUTATION_TOOLS = {"update_student", "delete_student", "update_timetable_rules", "update_buffer_mins", "manage_portal_access"}` — module-level constant used to track which mutations occurred for `self_eval`. `create_student` is tracked separately (check for `result.get("id")`) rather than via this set.
-- `self_eval` runs after each tool round that contains mutations, before moving to the next round. Stop checks happen at the top of each round, so a stopped request receives self-eval results only for rounds that completed before the stop.
+- `self_eval` runs after each tool round that contains mutations, before moving to the next round.
+- **Persistence paths:** `on_complete` (normal finish) UPDATEs `pre_agent_id` with real content + `is_error=False`; `was_stopped` / `except` / `finally` UPDATE with `is_error=True`. The `finally` guard `not completed_normally and not agent_msg_saved` prevents double-writes.
 
 ---
 
@@ -103,7 +132,7 @@ START → supervisor ──dispatch──► student_agent  ──► supervisor
 
 - **`lg/tool_factories.py`** — `make_student_tools()`, `make_template_tools()`, `make_timetable_tools()`: wrap the shared tool implementations in Pydantic schemas for LangGraph. Each factory appends `make_cannot_complete_tool()` and `make_final_answer_tool()`.
 
-- **Subagents** (`student_agent.py`, `template_agent.py`, `timetable_agent.py`): each wraps its tool set with a domain-specific system prompt. `student_agent` is instructed to use UUIDs from task descriptions directly (skip `search_students`) and always append `[student_id:NAME:UUID]` tokens in replies involving `get_student`, `create_student`, or `update_student`. All three subagents call `cannot_complete(reason=...)` on tool mismatch and `final_answer(text=...)` as the mandatory ending. `make_call_agent` in `supervisor.py` extracts the reply from the `final_answer`/`cannot_complete` ToolMessage first, falling back to a free-text AIMessage.
+- **Subagents** (`student_agent.py`, `template_agent.py`, `timetable_agent.py`): each wraps its tool set with a domain-specific system prompt. All three use markdown-only formatting (never HTML). `student_agent` is instructed to use UUIDs from task descriptions directly (skip `search_students`) and always append `[student_id:NAME:UUID]` tokens in replies involving `get_student`, `create_student`, or `update_student`. All three subagents call `cannot_complete(reason=...)` on tool mismatch and `final_answer(text=...)` as the mandatory ending. `make_call_agent` in `supervisor.py` extracts the reply from the `final_answer`/`cannot_complete` ToolMessage first, falling back to a free-text AIMessage.
 
 - **`lg/agent_state.py`** — `AgentState`: `messages: Annotated[list[BaseMessage], add_messages]` + `audit_log: Annotated[list[str], operator.add]`. `audit_log` accumulates self-eval verdicts across tool rounds and is never sent to the LLM.
 
@@ -111,7 +140,7 @@ START → supervisor ──dispatch──► student_agent  ──► supervisor
 
 - **`lg/post_hooks.py`** — `make_student_post_hook()`, `make_timetable_post_hook()`: run `self_eval` for mutations in the current tool round in parallel via `asyncio.gather` and return `{"audit_log": [combined_verdict]}`. `_find_round_mutation_calls` scans backward for the last AIMessage with tool_calls (current round only).
 
-- **`lg/stream_adapter.py`** — `pipe_langgraph_stream()` translates LangGraph `(namespace, mode, data)` event tuples into the shared SSE event types. In `updates` mode, drains `audit_log` from each node's output and emits verdicts as SSE `step` events. `is_routing_relevant()` filters what gets stored in `lgHistory` — see `docs/decisions.md`.
+- **`lg/stream_adapter.py`** — `pipe_langgraph_stream()` translates LangGraph `(namespace, mode, data)` event tuples into the shared SSE event types. In `updates` mode, drains `audit_log` from each node's output and emits verdicts as SSE `step` events. `is_routing_relevant()` filters what gets stored in LLM history — see `docs/decisions.md`. Calls `on_complete(accumulated_messages)` before emitting `done`; `on_complete` saves the agent message to DB and updates `lg_contents` on the conversation row.
 
 - **`lg/model.py`** — `get_gemini_chat_model()` returns a fresh `ChatGoogleGenerativeAI` instance per call (`gemini-2.5-flash`, `temperature=0`, `thinking_budget=0`). Parallel subagents must not share a model instance — hence a new instance is constructed each time.
 
@@ -125,14 +154,12 @@ Both `POST /agent/chat` (classic) and `POST /agent/lg/chat` (LangGraph) emit the
 |---|---|---|
 | `step` | After each tool call (and after self-eval) | `{ type: "step", content: "🔧 tool_name({...})" }` |
 | `chunk` | Streaming text tokens | `{ type: "chunk", content: "..." }` |
-| `ui_action` | After `generate_slot_availability` or `download_timetable_image` | `{ type: "ui_action", action: "slots_ready" \| "download_schedule", payload: {...} }` |
-| `history` | After classic loop completes cleanly | `{ type: "history", contents: Content[] }` — full Gemini `Content[]` (tool-call parts included) |
-| `lg_history` | After LangGraph loop completes cleanly | `{ type: "lg_history", messages: StoredMessage[] }` — routing-level messages only |
-| `done` | Stream complete | `{ type: "done" }` |
+| `ui_action` | After `generate_slot_availability` or `download_timetable_image`, or after student create/update | `{ type: "ui_action", action: "slots_ready" \| "download_schedule" \| "student_links", payload: {...} }` |
+| `done` | Stream complete (after DB save) | `{ type: "done" }` |
 | `stopped` | User-initiated stop | `{ type: "stopped" }` |
 | `error` | Unhandled exception | `{ type: "error", message: "..." }` |
 
-`ui_action` uses a generic envelope with an `action` discriminator — adding a new UI-trigger tool only requires a new `action` value, not a new SSE event type or new frontend handler branch.
+`ui_action` uses a generic envelope with an `action` discriminator — adding a new UI-trigger tool only requires a new `action` value, not a new SSE event type.
 
 **Classic loop (`router.py`):** `execute_tool` accepts an optional `side_effects: list[dict]` parameter; the two special match cases (`generate_slot_availability`, `download_timetable_image`) append their `ui_action` dict to the list if the result contains the expected key. The main loop drains it with `yield` after all tools in a round complete.
 

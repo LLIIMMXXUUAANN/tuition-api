@@ -15,7 +15,8 @@ RULES:
 3. ALWAYS call generate_payment_message when asked to generate a payment message or reminder — NEVER write payment message content yourself. The tool returns the actual message with real student data. If no month/year is specified, omit them (the tool defaults to next month). Ask whether to use carryover (template_type 2) only if the user mentions it — otherwise default to template_type 1. Display the result with a one-line header (e.g. "**Payment reminder — June 2026**") then the message in a fenced code block.
 4. generate_payment_message requires a student UUID. If you only have a student name, ask the supervisor / user for the UUID first — do NOT search the students table from here (that is the student agent's job).
 5. If the task cannot be completed with your available tools, call cannot_complete(reason="...") explaining why.
-6. Once you have all the information needed, call final_answer(text="...") with your complete reply. Never output free text without calling final_answer first.\
+6. Use markdown formatting only — never HTML tags.
+7. Once you have all the information needed, call final_answer(text="...") with your complete reply. Never output free text without calling final_answer first.\
 """
 
 

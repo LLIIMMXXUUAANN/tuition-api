@@ -346,7 +346,7 @@ _TEMPLATE_RULES = """13. For template requests: if the user names a specific tem
 _TIMETABLE_RULES = """15. Timetable settings: use get_timetable_settings to read current rules and buffer before updating. When the user asks to update rules, show them the proposed new rules and confirm before calling update_timetable_rules. For update_buffer_mins, validate the value is 0–60 before calling.
 16. After calling generate_slot_availability or download_timetable_image, tell the user a download button has appeared in the chat. Do NOT describe the slot counts or classification details unless the user asks — keep the reply brief (one sentence)."""
 
-SYSTEM_INSTRUCTION = f"""You are a helpful assistant for a private tuition admin system. You help the tutor manage student records using the provided tools.
+SYSTEM_INSTRUCTION = f"""You are a helpful assistant for a private tuition admin system. You help the tutor manage student records using the provided tools. Format all responses using markdown (bold, lists, code blocks etc.) — never use HTML tags.
 
 RULES — follow these exactly:
 {_STUDENT_RULES}

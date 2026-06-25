@@ -9,9 +9,11 @@ import asyncio
 import datetime
 import json
 import time
+import traceback
 
 import pytz
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends
+from fastapi.responses import JSONResponse
 from google.genai import types
 from langchain_core.messages import (
     AIMessage as LCAIMessage,
@@ -22,6 +24,7 @@ from langchain_core.messages import (
 from pydantic import BaseModel
 from sse_starlette.sse import EventSourceResponse
 
+from app.features.agent import persistence
 from app.features.agent.eval import self_eval
 from app.features.agent.lg.stream_adapter import is_routing_relevant, pipe_langgraph_stream
 from app.features.agent.lg.supervisor import make_supervisor
@@ -38,7 +41,6 @@ from app.features.agent.tools import (
     get_fee_summary,
     get_schedule,
     get_student,
-    get_template,
     get_timetable_settings,
     list_students,
     list_templates,
@@ -48,6 +50,7 @@ from app.features.agent.tools import (
     update_buffer_mins,
     update_student,
     update_timetable_rules,
+    get_template,
 )
 from app.auth import require_internal_secret
 from app.shared.gemini.client import gemini_client
@@ -172,20 +175,48 @@ async def execute_tool(
 
 
 # ---------------------------------------------------------------------------
-# Chat endpoint
+# Conversation management endpoints
 # ---------------------------------------------------------------------------
 
 
-@router.post("/chat")
-async def agent_chat(request: Request):
-    body = await request.json()
-    messages: list[dict] = body.get("messages", [])
-    request_id: str | None = body.get("requestId")
-    gemini_history: list[dict] = body.get("geminiHistory", [])
+@router.get("/conversations/current")
+async def get_current_conversation():
+    supabase = await get_supabase()
+    return await persistence.get_or_create_conversation(supabase)
 
-    if not messages:
-        from fastapi.responses import JSONResponse
-        return JSONResponse({"error": "messages is required"}, status_code=400)
+
+@router.get("/conversations/{conversation_id}/messages")
+async def get_conversation_messages(conversation_id: str):
+    supabase = await get_supabase()
+    msgs = await persistence.get_messages(supabase, conversation_id)
+    return {"messages": msgs}
+
+
+@router.post("/conversations/{conversation_id}/clear")
+async def clear_conversation(conversation_id: str):
+    supabase = await get_supabase()
+    await persistence.clear_conversation(supabase, conversation_id)
+    return {"ok": True}
+
+
+# ---------------------------------------------------------------------------
+# Chat endpoint (classic Gemini single-agent)
+# ---------------------------------------------------------------------------
+
+
+class AgentChatRequest(BaseModel):
+    conversation_id: str
+    message: str | None = None
+    request_id: str | None = None
+    retry_message_id: str | None = None
+    edit_user_message_id: str | None = None
+    new_content: str | None = None
+
+
+@router.post("/chat")
+async def agent_chat(body: AgentChatRequest):
+    supabase = await get_supabase()
+    request_id = body.request_id
 
     # Build MYT date string (cross-platform: no %-d)
     MYT = pytz.timezone("Asia/Kuala_Lumpur")
@@ -193,22 +224,77 @@ async def agent_chat(request: Request):
     myt_date_str = now_myt.strftime("%A, %B ") + str(now_myt.day) + now_myt.strftime(", %Y")
     system_instruction = f"Today is {myt_date_str} (Malaysia Time).\n\n{SYSTEM_INSTRUCTION}"
 
-    supabase = await get_supabase()
+    # --- Determine send path and load history ---
+    conv = await persistence.get_conversation(supabase, body.conversation_id)
+    if conv is None:
+        return JSONResponse({"error": "Conversation not found"}, status_code=404)
+
+    user_message_content: str
+    gemini_history_raw: list = conv.get("gemini_contents") or []
+    agent_msg_id_to_update: str | None = None
+
+    if body.retry_message_id:
+        # Retry: reload snapshot from the preceding user message
+        failed = await persistence.get_message_by_id(supabase, body.retry_message_id)
+        if not failed:
+            return JSONResponse({"error": "Message not found"}, status_code=404)
+        prior_user = await persistence.get_preceding_user_message(
+            supabase, body.conversation_id, failed["created_at"]
+        )
+        if not prior_user:
+            return JSONResponse({"error": "No preceding user message found"}, status_code=400)
+        snapshot = prior_user.get("pre_turn_llm_snapshot") or {}
+        gemini_history_raw = snapshot.get("history") or []
+        user_message_content = prior_user["content"]
+        agent_msg_id_to_update = failed["id"]
+    elif body.edit_user_message_id:
+        # Edit: delete old user message and everything after it, insert new user message
+        old_user = await persistence.get_message_by_id(supabase, body.edit_user_message_id)
+        if not old_user:
+            return JSONResponse({"error": "Message not found"}, status_code=404)
+        snapshot = old_user.get("pre_turn_llm_snapshot") or {}
+        gemini_history_raw = snapshot.get("history") or []
+        user_message_content = body.new_content or ""
+        await persistence.delete_messages_from(supabase, body.conversation_id, old_user["created_at"])
+        await persistence.insert_user_message(
+            supabase, body.conversation_id, user_message_content,
+            pre_turn_llm_snapshot={"mode": "gemini", "history": gemini_history_raw},
+        )
+    else:
+        # Normal send
+        user_message_content = body.message or ""
+        await persistence.insert_user_message(
+            supabase, body.conversation_id, user_message_content,
+            pre_turn_llm_snapshot={"mode": "gemini", "history": gemini_history_raw},
+        )
+
+    # Pre-insert placeholder agent row BEFORE streaming starts (same pattern as lg_chat).
+    pre_agent_id: str | None = None
+    if not agent_msg_id_to_update:
+        try:
+            pre_agent_id = await persistence.pre_insert_agent_message(
+                supabase, body.conversation_id
+            )
+        except Exception:
+            pass  # non-fatal — falls back to INSERT in save paths
 
     async def event_gen():
-        # Build initial contents
+        # Build initial contents from DB history
         contents: list[types.Content]
-        if gemini_history:
-            latest_msg = messages[-1]["content"]
-            contents = [_to_content(c) for c in gemini_history]
-            contents.append(types.Content(role="user", parts=[types.Part(text=latest_msg)]))
+        if gemini_history_raw:
+            contents = [_to_content(c) for c in gemini_history_raw]
+            contents.append(types.Content(role="user", parts=[types.Part(text=user_message_content)]))
         else:
-            contents = []
-            for m in messages:
-                role = "model" if m["role"] == "agent" else m["role"]
-                contents.append(types.Content(role=role, parts=[types.Part(text=m["content"])]))
+            contents = [types.Content(role="user", parts=[types.Part(text=user_message_content)])]
 
+        accumulated_content: list[str] = []
+        accumulated_steps: list[str] = []
+        accumulated_students: list | None = None
+        accumulated_schedule_students: list | None = None
+        accumulated_slot_data: list | None = None
         got_reply = False
+        agent_msg_saved = False
+        completed_normally = False
 
         try:
             for _round in range(10):
@@ -240,6 +326,7 @@ async def agent_chat(request: Request):
                                 trailing += part.text
                                 if len(trailing) > TRAILING_BUFFER:
                                     flush, trailing = trailing[:-TRAILING_BUFFER], trailing[-TRAILING_BUFFER:]
+                                    accumulated_content.append(flush)
                                     yield {"data": json.dumps({"type": "chunk", "content": flush})}
 
                 # Rebuild model content from accumulated round
@@ -260,8 +347,10 @@ async def agent_chat(request: Request):
                     got_reply = True
                     cleaned, students = extract_student_tokens(trailing)
                     if students:
+                        accumulated_students = students
                         yield {"data": json.dumps({"type": "ui_action", "action": "student_links", "payload": {"studentLinks": students}})}
                     if cleaned:
+                        accumulated_content.append(cleaned)
                         yield {"data": json.dumps({"type": "chunk", "content": cleaned})}
                     break
 
@@ -269,7 +358,9 @@ async def agent_chat(request: Request):
 
                 # Emit step events before parallel execution (stable display order)
                 for fc in named_calls:
-                    yield {"data": json.dumps({"type": "step", "content": f"🔧 {fc.name}({json.dumps(dict(fc.args or {}))})" })}
+                    step_text = f"🔧 {fc.name}({json.dumps(dict(fc.args or {}))})"
+                    accumulated_steps.append(step_text)
+                    yield {"data": json.dumps({"type": "step", "content": step_text})}
 
                 # Execute all tools in parallel, record timings
                 timings: list[dict] = [{}] * len(named_calls)
@@ -287,7 +378,9 @@ async def agent_chat(request: Request):
                 if len(named_calls) > 1:
                     round_ms = int((time.monotonic() - round_start) * 1000)
                     timing_str = ", ".join(f"{t['name']} {t['ms']}ms" for t in timings)
-                    yield {"data": json.dumps({"type": "step", "content": f"⏱ parallel ×{len(named_calls)} — {timing_str} (total {round_ms}ms)"})}
+                    step_text = f"⏱ parallel ×{len(named_calls)} — {timing_str} (total {round_ms}ms)"
+                    accumulated_steps.append(step_text)
+                    yield {"data": json.dumps({"type": "step", "content": step_text})}
 
                 # Build function response parts
                 fn_response_parts: list[types.Part] = []
@@ -302,6 +395,10 @@ async def agent_chat(request: Request):
 
                 # Emit UI side-effect events collected during tool execution
                 for event in side_effects:
+                    if event.get("action") == "slots_ready":
+                        accumulated_slot_data = event.get("payload", {}).get("slots")
+                    elif event.get("action") == "download_schedule":
+                        accumulated_schedule_students = event.get("payload", {}).get("students")
                     yield {"data": json.dumps(event)}
 
                 contents.append(types.Content(role="user", parts=fn_response_parts))
@@ -321,24 +418,113 @@ async def agent_chat(request: Request):
                     ])
                     for verdict in verdicts:
                         if verdict:
+                            accumulated_steps.append(verdict)
                             yield {"data": json.dumps({"type": "step", "content": verdict})}
+
+            # Post-loop: determine outcome (inside try so finally still covers abort)
+            was_stopped = bool(stop_signals.pop(request_id, False)) if request_id else False
+
+            if not got_reply and not was_stopped:
+                fallback = "I wasn't able to complete that in the allowed steps — please try a simpler request."
+                accumulated_content.append(fallback)
+                yield {"data": json.dumps({"type": "chunk", "content": fallback})}
+
+            if was_stopped:
+                effective_id = agent_msg_id_to_update or pre_agent_id
+                try:
+                    if effective_id:
+                        await persistence.update_agent_message(
+                            supabase, effective_id,
+                            content="".join(accumulated_content),
+                            steps=accumulated_steps,
+                            is_error=True,
+                        )
+                    else:
+                        await persistence.insert_agent_message(
+                            supabase, body.conversation_id,
+                            content="".join(accumulated_content),
+                            steps=accumulated_steps,
+                            is_error=True,
+                        )
+                    agent_msg_saved = True
+                except Exception:
+                    pass
+                yield {"data": json.dumps({"type": "stopped"})}
+            else:
+                effective_id = agent_msg_id_to_update or pre_agent_id
+                history_dicts = [_content_to_dict(c) for c in contents]
+                try:
+                    if effective_id:
+                        await persistence.update_agent_message(
+                            supabase, effective_id,
+                            content="".join(accumulated_content),
+                            steps=accumulated_steps,
+                            students=accumulated_students,
+                            schedule_students=accumulated_schedule_students,
+                            slot_data=accumulated_slot_data,
+                        )
+                    else:
+                        await persistence.insert_agent_message(
+                            supabase, body.conversation_id,
+                            content="".join(accumulated_content),
+                            steps=accumulated_steps,
+                            students=accumulated_students,
+                            schedule_students=accumulated_schedule_students,
+                            slot_data=accumulated_slot_data,
+                        )
+                    await persistence.update_conversation_history(
+                        supabase, body.conversation_id, gemini_contents=history_dicts
+                    )
+                    agent_msg_saved = True
+                except Exception:
+                    pass
+                yield {"data": json.dumps({"type": "done"})}
+                completed_normally = True
 
         except Exception as e:
             if request_id:
                 stop_signals.pop(request_id, None)
+            effective_id = agent_msg_id_to_update or pre_agent_id
+            try:
+                if effective_id:
+                    await persistence.update_agent_message(
+                        supabase, effective_id,
+                        content="".join(accumulated_content),
+                        steps=accumulated_steps,
+                        is_error=True,
+                    )
+                else:
+                    await persistence.insert_agent_message(
+                        supabase, body.conversation_id,
+                        content="".join(accumulated_content),
+                        steps=accumulated_steps,
+                        is_error=True,
+                    )
+                agent_msg_saved = True
+            except Exception:
+                pass
             yield {"data": json.dumps({"type": "error", "message": str(e)})}
-            return
 
-        was_stopped = bool(stop_signals.pop(request_id, False)) if request_id else False
-
-        if not got_reply and not was_stopped:
-            yield {"data": json.dumps({"type": "chunk", "content": "I wasn't able to complete that in the allowed steps — please try a simpler request."})}
-
-        if not was_stopped:
-            history_dicts = [_content_to_dict(c) for c in contents]
-            yield {"data": json.dumps({"type": "history", "contents": history_dicts})}
-
-        yield {"data": json.dumps({"type": "stopped" if was_stopped else "done"})}
+        finally:
+            if not completed_normally and not agent_msg_saved:
+                effective_id = agent_msg_id_to_update or pre_agent_id
+                try:
+                    if effective_id:
+                        await persistence.update_agent_message(
+                            supabase, effective_id,
+                            content="".join(accumulated_content),
+                            steps=accumulated_steps,
+                            is_error=True,
+                        )
+                    else:
+                        await persistence.insert_agent_message(
+                            supabase, body.conversation_id,
+                            content="".join(accumulated_content),
+                            steps=accumulated_steps,
+                            is_error=True,
+                        )
+                except Exception:
+                    pass
 
     return EventSourceResponse(event_gen())
 
@@ -365,44 +551,127 @@ async def stop_agent(body: StopRequest):
 
 
 @router.post("/lg/chat")
-async def lg_chat(request: Request):
-    body = await request.json()
-    messages_raw: list[dict] = body.get("messages", [])
-    request_id: str | None = body.get("requestId")
-    lg_history: list[dict] = body.get("lgHistory", [])
-
-    if not messages_raw:
-        from fastapi.responses import JSONResponse
-        return JSONResponse({"error": "messages is required"}, status_code=400)
-
-    # Build message history: restore from stored LangGraph history or convert from text
-    if lg_history:
-        latest_user_msg = messages_raw[-1]["content"]
-        restored = messages_from_dict(lg_history)
-        messages = restored + [LCHumanMessage(latest_user_msg)]
-    else:
-        messages = [
-            LCAIMessage(m["content"]) if m["role"] == "model" else LCHumanMessage(m["content"])
-            for m in messages_raw
-        ]
+async def lg_chat(body: AgentChatRequest):
+    supabase = await get_supabase()
+    request_id = body.request_id
 
     # MYT date string (cross-platform: no %-d)
     MYT = pytz.timezone("Asia/Kuala_Lumpur")
     now_myt = datetime.datetime.now(tz=MYT)
     myt_date_str = now_myt.strftime("%A, %B ") + str(now_myt.day) + now_myt.strftime(", %Y")
 
-    supabase = await get_supabase()
+    # --- Determine send path and load history ---
+    conv = await persistence.get_conversation(supabase, body.conversation_id)
+    if conv is None:
+        return JSONResponse({"error": "Conversation not found"}, status_code=404)
+
+    user_message_content: str
+    lg_history_raw: list = conv.get("lg_contents") or []
+    agent_msg_id_to_update: str | None = None
+
+    if body.retry_message_id:
+        failed = await persistence.get_message_by_id(supabase, body.retry_message_id)
+        if not failed:
+            return JSONResponse({"error": "Message not found"}, status_code=404)
+        prior_user = await persistence.get_preceding_user_message(
+            supabase, body.conversation_id, failed["created_at"]
+        )
+        if not prior_user:
+            return JSONResponse({"error": "No preceding user message found"}, status_code=400)
+        snapshot = prior_user.get("pre_turn_llm_snapshot") or {}
+        lg_history_raw = snapshot.get("history") or []
+        user_message_content = prior_user["content"]
+        agent_msg_id_to_update = failed["id"]
+    elif body.edit_user_message_id:
+        old_user = await persistence.get_message_by_id(supabase, body.edit_user_message_id)
+        if not old_user:
+            return JSONResponse({"error": "Message not found"}, status_code=404)
+        snapshot = old_user.get("pre_turn_llm_snapshot") or {}
+        lg_history_raw = snapshot.get("history") or []
+        user_message_content = body.new_content or ""
+        await persistence.delete_messages_from(supabase, body.conversation_id, old_user["created_at"])
+        await persistence.insert_user_message(
+            supabase, body.conversation_id, user_message_content,
+            pre_turn_llm_snapshot={"mode": "lg", "history": lg_history_raw},
+        )
+    else:
+        user_message_content = body.message or ""
+        await persistence.insert_user_message(
+            supabase, body.conversation_id, user_message_content,
+            pre_turn_llm_snapshot={"mode": "lg", "history": lg_history_raw},
+        )
+
+    # Build LangGraph message list
+    if lg_history_raw:
+        restored = messages_from_dict(lg_history_raw)
+        messages = restored + [LCHumanMessage(user_message_content)]
+    else:
+        messages = [LCHumanMessage(user_message_content)]
+
     supervisor = make_supervisor(supabase, myt_date_str)
 
-    async def on_complete(accumulated_messages):
-        """Filter accumulated messages to routing-relevant only and emit lg_history."""
-        full_history = list(messages) + list(accumulated_messages)
-        relevant = [m for m in full_history if is_routing_relevant(m)]
-        stored = messages_to_dict(relevant)
-        yield {"data": json.dumps({"type": "lg_history", "messages": stored})}
+    # Pre-insert placeholder agent row BEFORE streaming starts so the row is in DB
+    # before ANY SSE byte is sent. Fast page reloads always find it (is_error=True
+    # default; on_complete flips to False on success).
+    pre_agent_id: str | None = None
+    if not agent_msg_id_to_update:
+        try:
+            pre_agent_id = await persistence.pre_insert_agent_message(
+                supabase, body.conversation_id
+            )
+        except Exception:
+            pass  # non-fatal — falls back to INSERT in on_complete / finally
 
     async def event_gen():
+        accumulated_content: list[str] = []
+        accumulated_steps: list[str] = []
+        accumulated_students: list | None = None
+        accumulated_schedule_students: list | None = None
+        accumulated_slot_data: list | None = None
         completed_normally = False
+        agent_msg_saved = False
+
+        async def on_complete(accumulated_messages):
+            nonlocal agent_msg_saved
+            """Save to DB instead of emitting lg_history SSE event."""
+            try:
+                full_history = list(messages) + list(accumulated_messages)
+                relevant = [m for m in full_history if is_routing_relevant(m)]
+                stored = messages_to_dict(relevant)
+            except Exception:
+                print("[on_complete] messages_to_dict failed:")
+                traceback.print_exc()
+                stored = None
+
+            effective_id = agent_msg_id_to_update or pre_agent_id
+            try:
+                if effective_id:
+                    await persistence.update_agent_message(
+                        supabase, effective_id,
+                        content="".join(accumulated_content),
+                        steps=accumulated_steps,
+                        students=accumulated_students,
+                        schedule_students=accumulated_schedule_students,
+                        slot_data=accumulated_slot_data,
+                    )
+                else:
+                    await persistence.insert_agent_message(
+                        supabase, body.conversation_id,
+                        content="".join(accumulated_content),
+                        steps=accumulated_steps,
+                        students=accumulated_students,
+                        schedule_students=accumulated_schedule_students,
+                        slot_data=accumulated_slot_data,
+                    )
+                agent_msg_saved = True
+                if stored is not None:
+                    await persistence.update_conversation_history(
+                        supabase, body.conversation_id, lg_contents=stored
+                    )
+            except Exception:
+                print("[on_complete] DB save failed:")
+                traceback.print_exc()
+
         try:
             lg_stream = supervisor.astream(
                 {"messages": messages},
@@ -411,15 +680,73 @@ async def lg_chat(request: Request):
                 subgraphs=True,
             )
             async for event in pipe_langgraph_stream(lg_stream, request_id, on_complete):
+                # Accumulate for DB persistence on stopped/error paths
+                data_str = event.get("data", "")
+                if data_str:
+                    try:
+                        parsed = json.loads(data_str)
+                        match parsed.get("type"):
+                            case "chunk":
+                                accumulated_content.append(parsed.get("content", ""))
+                            case "step":
+                                accumulated_steps.append(parsed.get("content", ""))
+                            case "ui_action":
+                                action = parsed.get("action")
+                                payload = parsed.get("payload", {})
+                                if action == "student_links":
+                                    accumulated_students = payload.get("studentLinks")
+                                elif action == "download_schedule":
+                                    accumulated_schedule_students = payload.get("students")
+                                elif action == "slots_ready":
+                                    accumulated_slot_data = payload.get("slots")
+                            case "done":
+                                completed_normally = True
+                    except Exception:
+                        pass
                 yield event
-                # Detect normal completion
-                if event.get("data") and '"type": "done"' in event["data"]:
-                    completed_normally = True
         except Exception as e:
+            effective_id = agent_msg_id_to_update or pre_agent_id
+            try:
+                if effective_id:
+                    await persistence.update_agent_message(
+                        supabase, effective_id,
+                        content="".join(accumulated_content),
+                        steps=accumulated_steps,
+                        is_error=True,
+                    )
+                else:
+                    await persistence.insert_agent_message(
+                        supabase, body.conversation_id,
+                        content="".join(accumulated_content),
+                        steps=accumulated_steps,
+                        is_error=True,
+                    )
+                agent_msg_saved = True
+            except Exception:
+                pass
             yield {"data": json.dumps({"type": "error", "message": str(e)})}
         finally:
             was_stopped = stop_signals.pop(request_id, False) if request_id else False
-            if was_stopped and not completed_normally:
-                yield {"data": json.dumps({"type": "stopped"})}
+            if not completed_normally and not agent_msg_saved:
+                effective_id = agent_msg_id_to_update or pre_agent_id
+                try:
+                    if effective_id:
+                        await persistence.update_agent_message(
+                            supabase, effective_id,
+                            content="".join(accumulated_content),
+                            steps=accumulated_steps,
+                            is_error=True,
+                        )
+                    else:
+                        await persistence.insert_agent_message(
+                            supabase, body.conversation_id,
+                            content="".join(accumulated_content),
+                            steps=accumulated_steps,
+                            is_error=True,
+                        )
+                except Exception:
+                    pass
+                if was_stopped:
+                    yield {"data": json.dumps({"type": "stopped"})}
 
     return EventSourceResponse(event_gen())
