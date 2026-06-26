@@ -1,7 +1,7 @@
 """LangGraph stream adapter — port of src/features/agent/lib/lg/stream-adapter.ts.
 
-Translates LangGraph's multi-mode event stream into the same SSE event types
-as the classic agent: chunk, step, done, stopped, error, ui_action.
+Translates LangGraph's multi-mode event stream into SSE event types:
+chunk, step, done, stopped, error, ui_action.
 """
 
 from __future__ import annotations

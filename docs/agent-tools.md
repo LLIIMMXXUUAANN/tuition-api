@@ -1,25 +1,18 @@
 # Agent Tool Reference
 
-All 18 shared tools available to the AI agent at `/admin/agent`. The same tool logic is shared by both agent backends:
-
-| Backend | Schema format | Entry point |
-|---|---|---|
-| **Classic** | `FunctionDeclaration[]` built in `app/features/agent/schema.py` | `POST /agent/chat` |
-| **LangGraph** (default) | LangGraph `tool()` wrappers with Pydantic schemas in `app/features/agent/lg/tool_factories.py`; single-turn supervisor dispatches to specialist subagents in parallel via `Send` | `POST /agent/lg/chat` |
-
-Tool implementations live in `app/features/agent/tools/` (split by domain: `student_tools.py`, `template_tools.py`, `timetable_tools.py`) and are called by both backends.
+All 18 tools available to the AI agent at `/admin/agent`. Tool implementations live in `app/features/agent/tools/` (split by domain: `student_tools.py`, `template_tools.py`, `timetable_tools.py`) and are wrapped for LangGraph via Pydantic schemas in `app/features/agent/lg/tool_factories.py`. The supervisor dispatches to specialist subagents in parallel via `Send` at `POST /agent/chat`.
 
 **Conversation history is persisted server-side** in Supabase (`agent_conversations` + `agent_messages` tables). The frontend calls `GET /conversations/current` on mount to load history — no localStorage. For LangGraph, only routing-level messages are stored in `lg_contents` — subagent-internal tool call pairs are stripped by `is_routing_relevant`. See `docs/decisions.md` for the full rationale.
 
-**LangSmith tracing** — LangGraph runs are traced automatically when `LANGCHAIN_TRACING=true` and `LANGSMITH_API_KEY` are set. Traces appear in the LangSmith web UI under the `LANGSMITH_PROJECT` name (default: `tuition-agent`). Classic-mode runs are not traced. See `.env.example` for the full set of LangSmith env vars.
+**LangSmith tracing** — runs are traced automatically when `LANGCHAIN_TRACING=true` and `LANGSMITH_API_KEY` are set. Traces appear in the LangSmith web UI under the `LANGSMITH_PROJECT` name (default: `tuition-agent`). See `.env.example` for the full set of LangSmith env vars.
 
 ---
 
 ## Table of Contents
 
-Tools are grouped by domain. In LangGraph mode each domain maps to one subagent; in classic mode all 18 are available to the single agent.
+Tools are grouped by domain — each domain maps to one subagent.
 
-**`student_agent` / classic** (10 tools)
+**`student_agent`** (10 tools)
 
 | Tool | Type | Summary |
 |---|---|---|
@@ -34,7 +27,7 @@ Tools are grouped by domain. In LangGraph mode each domain maps to one subagent;
 | [`get_schedule`](#get_schedule) | Read | List students who have class on a given day |
 | [`get_fee_summary`](#get_fee_summary) | Read | Calculate monthly fee revenue across all active students |
 
-**`template_agent` / classic** (3 tools)
+**`template_agent`** (3 tools)
 
 | Tool | Type | Summary |
 |---|---|---|
@@ -42,7 +35,7 @@ Tools are grouped by domain. In LangGraph mode each domain maps to one subagent;
 | [`get_template`](#get_template) | Read | Fetch the full content of a single template |
 | [`generate_payment_message`](#generate_payment_message) | Read | Generate a ready-to-send payment reminder message |
 
-**`timetable_agent` / classic** (5 tools)
+**`timetable_agent`** (5 tools)
 
 | Tool | Type | Summary |
 |---|---|---|
@@ -733,9 +726,9 @@ Supabase `select('name, class_schedule')` on `students` where `status = 'Active'
 
 ---
 
-## LangGraph-only tools
+## LangGraph orchestration tools
 
-These tools are **not** available in the classic Gemini loop. `dispatch` belongs to the supervisor; `final_answer` and `cannot_complete` belong to every subagent.
+`dispatch` belongs to the supervisor; `final_answer` and `cannot_complete` belong to every subagent.
 
 ### `dispatch`
 
@@ -756,9 +749,9 @@ The tool function itself never executes — `supervisor_node` intercepts the too
 
 ---
 
-## LangGraph-only terminal tools
+## Subagent terminal tools
 
-These two tools are appended to every subagent's tool list by `make_student_tools()`, `make_template_tools()`, and `make_timetable_tools()` in `lg/tool_factories.py`. They are **not** available in the classic Gemini loop — they exist solely to give LangGraph subagents a structured way to end their turn.
+These two tools are appended to every subagent's tool list by `make_student_tools()`, `make_template_tools()`, and `make_timetable_tools()` in `lg/tool_factories.py`. They give subagents a structured way to end their turn.
 
 ### `final_answer`
 

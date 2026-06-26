@@ -24,31 +24,25 @@ def test_agent_stop_returns_ok(client, auth_headers):
 
 
 def test_agent_chat_opens_sse_stream(client, auth_headers):
+    # Get or create the conversation so we have a valid conversation_id
+    conv_r = client.get("/agent/conversations/current", headers=auth_headers)
+    assert conv_r.status_code == 200
+    conversation_id = conv_r.json()["id"]
+
     with client.stream(
         "POST",
         "/agent/chat",
-        json={"messages": [{"role": "user", "content": "hi"}], "requestId": "test-smoke"},
+        json={
+            "conversation_id": conversation_id,
+            "message": "hi",
+            "request_id": "test-smoke",
+        },
         headers=auth_headers,
         timeout=30,
     ) as r:
         assert r.status_code == 200
         assert "text/event-stream" in r.headers.get("content-type", "")
         # Read just enough to confirm SSE events are flowing
-        event = _read_first_sse_event(r)
-        assert event is not None
-        assert "type" in event
-
-
-def test_agent_lg_chat_opens_sse_stream(client, auth_headers):
-    with client.stream(
-        "POST",
-        "/agent/lg/chat",
-        json={"messages": [{"role": "user", "content": "hi"}], "requestId": "test-lg-smoke"},
-        headers=auth_headers,
-        timeout=30,
-    ) as r:
-        assert r.status_code == 200
-        assert "text/event-stream" in r.headers.get("content-type", "")
         event = _read_first_sse_event(r)
         assert event is not None
         assert "type" in event

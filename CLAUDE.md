@@ -11,7 +11,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | File | Covers |
 |---|---|
 | `docs/decisions.md` | Non-obvious design decisions and the reasoning behind them |
-| `claude/agent.md` | Tool contract, system rules, SSE contract, classic loop, LangGraph graph |
+| `claude/agent.md` | Tool contract, system rules, SSE contract, LangGraph graph |
 | `claude/timetable.md` | Timetable routes, slot classification algorithm, prompt rules |
 | `claude/google.md` | Google OAuth, Calendar, Drive, cleanup, and bulk sync implementation |
 | `docs/agent-tools.md` | Full 18-tool reference (input / process / output for each tool) |
@@ -65,8 +65,7 @@ app/
       router.py        → Message template read/update routes
       service.py       → TEMPLATE_META, template_meta(), get_template
     agent/
-      router.py        → AI agent SSE — classic Gemini loop + LangGraph + conversation endpoints
-      schema.py        → TOOL_DECLARATIONS (18 tools) + SYSTEM_INSTRUCTION
+      router.py        → AI agent SSE — LangGraph multi-agent + conversation endpoints
       persistence.py   → conversation + message DB helpers (get_or_create_conversation, clear_conversation, pre_insert_agent_message, insert_user_message, update_agent_message)
       eval.py          → self_eval — post-mutation DB verification
       state.py         → stop_signals dict (keyed by request_id)
@@ -107,7 +106,7 @@ app/
 | `/students` | `app/features/students/router.py` | Student CRUD + portal lookup |
 | `/payment` | `app/features/payment/router.py` | Payment message generation |
 | `/timetable` | `app/features/timetable/router.py` | Timetable rules and slot generation |
-| `/agent` | `app/features/agent/router.py` | AI agent SSE streaming (two modes) |
+| `/agent` | `app/features/agent/router.py` | AI agent SSE streaming (LangGraph) |
 | `/templates` | `app/features/templates/router.py` | Message template read/update |
 
 All routers require the `X-Internal-Secret` header (checked by `app/auth.py`).
@@ -124,7 +123,7 @@ All routers require the `X-Internal-Secret` header (checked by `app/auth.py`).
 
 Six tables in the `public` schema:
 
-- **`agent_conversations`** — one permanent row. Holds `lg_contents`, `gemini_contents`, `prev_lg_contents`, `prev_gemini_contents` (all JSONB) — the LLM-level history used to reconstruct context. `prev_*` columns store the state before the last successful turn, enabling one-level undo for latest-message edit. RLS: `is_tutor()` only.
+- **`agent_conversations`** — one permanent row. Holds `lg_contents` and `prev_lg_contents` (both JSONB) — the LLM-level history used to reconstruct context. `prev_lg_contents` stores the state before the last successful turn, enabling one-level undo for latest-message edit. RLS: `is_tutor()` only.
 - **`agent_messages`** — one row per message. Columns: `conversation_id`, `role` (`user` | `agent`), `content`, `steps` (JSONB array), `is_error` (bool), `students` (JSONB), `schedule_students` (JSONB), `slot_data` (JSONB), `created_at`. RLS: `is_tutor()` only.
 - **`students`** — one row per student. `class_schedule` is a `jsonb` column storing `ClassSlot[]` (array of `{ day, start, end }`). `access_emails text[]` lists emails that can log in to the student portal. `calendar_event_ids text[]` stores one Google Calendar event ID per class slot, positionally matched to `class_schedule` (index 0 = event that owns the Meet conference). `status` (`Active` | `On Hold` | `Completed`) is the sole active/inactive flag. `today_homework` is a `text` column (multi-line). RLS: admin has full access; students can only SELECT their own row. Backend always uses the service-role key and bypasses RLS.
 - **`templates`** — one row per template, keyed by text `id` (e.g. `payment`, `review_request1`, `first_approach`). `content` is upserted on Save.
@@ -152,13 +151,11 @@ This keeps HTTP semantics out of the service layer and error handling out of too
 
 ### Agent system
 
-`app/features/agent/router.py` exposes two SSE endpoints:
+`app/features/agent/router.py` exposes one SSE endpoint:
 
-1. **`POST /agent/chat`** — Classic single-agent mode. Drives the Google Gemini SDK (`google-genai`) in a tool-call loop (up to 10 rounds). Tool declarations in `schema.py`, implementations in `tools/`, dispatched via a `match` block in `execute_tool`. After each tool round, mutations are verified in parallel via `self_eval` (`eval.py`).
+**`POST /agent/chat`** — LangGraph multi-agent mode. Builds a supervisor + three subagents on every request and streams via `lg/stream_adapter.py`.
 
-2. **`POST /agent/lg/chat`** — LangGraph multi-agent mode. Builds a supervisor + three subagents on every request and streams via `lg/stream_adapter.py`.
-
-`state.py` — module-level `stop_signals: dict[str, bool]` keyed by `request_id`; set by `POST /agent/stop` to signal in-flight requests to stop between tool rounds.
+`state.py` — module-level `stop_signals: dict[str, bool]` keyed by `request_id`; set by `POST /agent/stop` to signal in-flight requests to stop.
 
 See `claude/agent.md` for tool contract, system rules, SSE event types, and LangGraph graph detail.
 
@@ -167,5 +164,4 @@ See `claude/agent.md` for tool contract, system rules, SSE event types, and Lang
 - `app/shared/utils.py` — `DAYS`, `TIME_SLOTS`, `time_to_mins`, `format_fee`, `get_weekday_dates`, and other date/weekday/time utilities shared across tools.
 - `app/shared/gemini/client.py` — singleton `google.genai.Client` (`gemini_client`).
 - `app/shared/gemini/slot_generation.py` — `run_gemini_slot_generation(prompt)` — calls `gemini-2.5-flash` with structured JSON output and validates via Pydantic.
-- **Classic agent:** `generate_content_stream` returns a coroutine in the current SDK version — always `await` it before `async for`: `async for chunk in await gemini_client.aio.models.generate_content_stream(...)`.
 - **LangGraph subagents:** `get_gemini_chat_model()` constructs a fresh `ChatGoogleGenerativeAI` per call — parallel subagents must not share a model instance.

@@ -32,9 +32,7 @@ async def clear_conversation(supabase, conversation_id: str) -> None:
     await supabase.table("agent_messages").delete().eq("conversation_id", conversation_id).execute()
     await supabase.table("agent_conversations").update({
         "lg_contents": None,
-        "gemini_contents": None,
         "prev_lg_contents": None,
-        "prev_gemini_contents": None,
     }).eq("id", conversation_id).execute()
 
 
@@ -54,19 +52,13 @@ async def update_conversation_history(
     conversation_id: str,
     *,
     lg_contents: list | None = None,
-    gemini_contents: list | None = None,
     prev_lg_contents: list | None = None,
-    prev_gemini_contents: list | None = None,
 ) -> None:
     updates: dict = {"updated_at": datetime.now(timezone.utc).isoformat()}
     if lg_contents is not None:
         updates["lg_contents"] = lg_contents
-    if gemini_contents is not None:
-        updates["gemini_contents"] = gemini_contents
     if prev_lg_contents is not None:
         updates["prev_lg_contents"] = prev_lg_contents
-    if prev_gemini_contents is not None:
-        updates["prev_gemini_contents"] = prev_gemini_contents
     await supabase.table("agent_conversations").update(updates).eq("id", conversation_id).execute()
 
 

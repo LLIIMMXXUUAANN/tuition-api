@@ -1,6 +1,6 @@
 # tuition-api
 
-FastAPI backend for the tuition management system. Handles Google Calendar/Drive integration, AI agent chat (classic Gemini loop + LangGraph multi-agent), timetable slot generation, and payment message templating.
+FastAPI backend for the tuition management system. Handles Google Calendar/Drive integration, AI agent chat (LangGraph multi-agent), timetable slot generation, and payment message templating.
 
 ## Documentation
 
@@ -135,8 +135,7 @@ To regenerate: Google Account → Security → search "App Passwords".
 | `POST` | `/timetable/generate-slots` | ✓ | AI slot availability classification |
 | `GET` | `/templates` | ✓ | List all message templates |
 | `PUT` | `/templates/{id}` | ✓ | Update template content |
-| `POST` | `/agent/chat` | ✓ | Classic Gemini agent SSE stream |
-| `POST` | `/agent/lg/chat` | ✓ | LangGraph multi-agent SSE stream |
+| `POST` | `/agent/chat` | ✓ | LangGraph multi-agent SSE stream |
 | `POST` | `/agent/stop` | ✓ | Abort an in-flight agent request |
 | `GET` | `/agent/conversations/current` | ✓ | Return (or create) the single latest conversation + its messages |
 | `GET` | `/agent/conversations/{id}/messages` | ✓ | Fetch messages for a known conversation ID |

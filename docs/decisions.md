@@ -20,7 +20,7 @@ After any tool round that includes a write operation, `self_eval` runs a read-ba
 
 This is the standard approach for interactive agents: transient infrastructure failures (a Supabase read racing against a just-completed write) should not trigger agent retries that risk duplicate writes. Feeding verification failures back into the LLM loop (Option B) treats a monitoring concern as an agent-control concern, conflates two responsibilities, and introduces the risk of write amplification.
 
-**LangGraph:** `post_hooks.py` writes verdicts to `audit_log: Annotated[list[str], operator.add]` in `AgentState` — never injected into the message list, so verdicts never reach any `model.invoke()` call. `stream_adapter.py` drains `audit_log` from each node's output and emits verdicts as SSE `step` events.
+`post_hooks.py` writes verdicts to `audit_log: Annotated[list[str], operator.add]` in `AgentState` — never injected into the message list, so verdicts never reach any `model.invoke()` call. `stream_adapter.py` drains `audit_log` from each node's output and emits verdicts as SSE `step` events.
 
 ---
 
@@ -79,7 +79,7 @@ Two tools (`generate_slot_availability`, `download_timetable_image`) trigger fro
 
 One envelope type with an `action` discriminator means adding a new UI-trigger tool only requires a new `action` value — no new SSE event types, no new frontend handler branches.
 
-The coupling between "which tools trigger UI events" and SSE emission is in `execute_tool`'s match block (classic) and `tool_factories.py`'s `config.writer` callback (LangGraph) — not in the main streaming loop.
+The coupling between "which tools trigger UI events" and SSE emission is in `tool_factories.py`'s `config.writer` callback — not in the main streaming loop.
 
 ---
 
@@ -104,10 +104,10 @@ LangGraph checkpointers are designed for managing many concurrent threads, each 
 
 The custom persistence layer (`persistence.py`) also enables features that checkpointers don't provide out of the box:
 - **Pre-insert write-ahead pattern** — agent row inserted with `is_error=True` before SSE starts; guarantees the row exists even if the user reloads mid-stream
-- **`prev_lg_contents` / `prev_gemini_contents`** on the conversation row — updated every successful turn with the prior state, enabling one-level undo for latest-message edit. The earlier design stored a `pre_turn_llm_snapshot` on every user message row to support retrying any historical error, not just the latest one. That per-row snapshot was dropped once retry and edit were restricted to the latest message only (consistent with how Claude.ai behaves): failed turns never update `lg_contents`, so `lg_contents` is already the correct pre-failure state for retry; edit only ever reaches one turn back, so a single `prev_*` column on the conversation row is sufficient. No per-message snapshot overhead needed.
-- **Preemptive write on edit** — at the start of the edit path, `lg_contents` (and `gemini_contents`) is immediately reset to the pre-edit value (`prev_lg_contents`/`prev_gemini_contents`) before streaming begins. This ensures that if the LLM fails during an edit, the subsequent retry reads the correct pre-edit context — not the stale post-prior-turn state. The alternative (no preemptive write) would leave `lg_contents` pointing at stale history if the edit fails, causing retry to use the wrong context, including across page reloads.
+- **`prev_lg_contents`** on the conversation row — updated every successful turn with the prior state, enabling one-level undo for latest-message edit. The earlier design stored a `pre_turn_llm_snapshot` on every user message row to support retrying any historical error, not just the latest one. That per-row snapshot was dropped once retry and edit were restricted to the latest message only (consistent with how Claude.ai behaves): failed turns never update `lg_contents`, so `lg_contents` is already the correct pre-failure state for retry; edit only ever reaches one turn back, so a single `prev_lg_contents` column on the conversation row is sufficient. No per-message snapshot overhead needed.
+- **Preemptive write on edit** — at the start of the edit path, `lg_contents` is immediately reset to the pre-edit value (`prev_lg_contents`) before streaming begins. This ensures that if the LLM fails during an edit, the subsequent retry reads the correct pre-edit context — not the stale post-prior-turn state. The alternative (no preemptive write) would leave `lg_contents` pointing at stale history if the edit fails, causing retry to use the wrong context, including across page reloads.
 - **Cross-device access** — any device calling `GET /conversations/current` gets the same history, since there is no localStorage dependency
-- **`clear_conversation`** — wipes messages and resets all LLM history columns on the same row, keeping the conversation ID stable
+- **`clear_conversation`** — wipes messages and resets `lg_contents`/`prev_lg_contents` on the same row, keeping the conversation ID stable
 
 **When to add `AsyncPostgresSaver`:** if human-in-the-loop approval flows are needed (e.g. agent proposes a schedule change, tutor clicks Approve before it's committed), add `AsyncPostgresSaver` pointing at Supabase alongside the existing tables — not replacing them. The checkpointer handles graph resumption from a specific node boundary; `agent_messages` stays as-is for the chat UI. The two layers coexist independently.
 
@@ -153,12 +153,12 @@ This project omits user JWT forwarding and uses no service account JWT for serve
 
 **Prompt caching**
 
-Gemini context caching can cache the static prefix (system instruction + tool declarations) at a reduced token rate. Not used because:
-- **Prefix is too small.** System instruction + 18 tool declarations is ~2,000–4,000 tokens — a fraction of a cent saving per request at Gemini 2.5 Flash pricing.
+Gemini context caching can cache a static prefix (system prompt + tool schemas) at a reduced token rate (~4× cheaper for cached tokens). Not used because:
+- **Prefixes are small.** Each subagent's system prompt + tool schemas is ~1,000–3,000 tokens — a fraction of a cent saving per request at Gemini 2.5 Flash pricing.
 - **Single admin, low volume.** Cache hits require the cache to stay warm (TTL ≥ 1 min). Occasional usage means mostly cold-cache requests.
-- **Intra-request benefit is modest.** The classic loop runs 2–3 rounds typically — too small a multiplier to justify lifecycle complexity.
+- **Short subagent turns.** Each subagent runs 1–3 tool calls typically — too small a multiplier to justify cache lifecycle complexity.
 
-**When to add it:** inject large static documents (curriculum, full student roster, multi-page scheduling rules) into the system prompt. At 50k+ tokens the ~4× cached-token discount becomes material. Create a module-level cache object and invalidate it on content change.
+**When to add it:** inject large static documents (curriculum, full student roster, multi-page scheduling rules) into a subagent's system prompt. At 50k+ tokens the ~4× cached-token discount becomes material. In LangGraph, cache per-subagent: `ChatGoogleGenerativeAI` supports caching via the `cached_content` parameter — create a module-level cache per subagent and invalidate it when the system prompt changes (e.g. when timetable rules are updated).
 
 ---
 
@@ -170,7 +170,7 @@ At 50–100+ tools, the industry uses embedding-based RAG to fetch only the most
 
 **Conversation history summarisation**
 
-When `lg_contents` or `gemini_contents` grows large enough to approach the context window limit or noticeably increase per-request token cost, compress old turns via summarise-and-replace. Not needed now — one admin, conversation is cleared periodically, history is small.
+When `lg_contents` grows large enough to approach the context window limit or noticeably increase per-request token cost, compress old turns via summarise-and-replace. Not needed now — one admin, conversation is cleared periodically, history is small.
 
 **How to implement when needed:**
 
@@ -182,7 +182,7 @@ When `lg_contents` or `gemini_contents` grows large enough to approach the conte
 
 4. **`agent_messages` stays untouched** — the UI always shows the full conversation history. The two stores diverge intentionally: `agent_messages` is the display layer, `lg_contents` is the compressed LLM context layer.
 
-5. **Hook point** — summarise inside `on_complete` in `stream_adapter.py` before saving updated `lg_contents` back to `agent_conversations`, or as a pre-request step at the top of the `lg_chat` endpoint.
+5. **Hook point** — summarise inside `on_complete` in `stream_adapter.py` before saving updated `lg_contents` back to `agent_conversations`, or as a pre-request step at the top of the `agent_chat` endpoint.
 
 **Compatibility with retry/edit:** since both are restricted to the latest message only, summarisation does not break them. Summarisation compresses old turns; `prev_lg_contents` always captures the state immediately before the latest turn — which is always in the unsummarised recent window. Retry uses `lg_contents` directly (failed turns never update it); edit reads `prev_lg_contents`. Neither operation ever needs to reach back past the summarisation boundary.
 

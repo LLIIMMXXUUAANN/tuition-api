@@ -47,15 +47,15 @@ Fine-grained reads, coarse-grained writes. Read tools (`search_students`, `get_s
 ## Persistence (`app/features/agent/persistence.py`)
 
 All conversation state lives in Supabase. Two tables (both RLS-protected via `is_tutor()`):
-- **`agent_conversations`** — one row per conversation, holds `lg_contents`, `gemini_contents`, `prev_lg_contents`, `prev_gemini_contents` (all JSONB) for LLM history and one-level undo
+- **`agent_conversations`** — one row per conversation, holds `lg_contents` and `prev_lg_contents` (both JSONB) for LLM history and one-level undo
 - **`agent_messages`** — one row per message, holds `role`, `content`, `steps`, `is_error`, `students`, `schedule_students`, `slot_data`, and `created_at`
 
 **Key functions:**
 - `get_or_create_conversation(supabase)` — fetches the most recent conversation row (or creates one if the table is empty); returns `{ id, messages }` in a single call. Used by `GET /conversations/current`.
-- `clear_conversation(supabase, conversation_id)` — deletes all messages and resets all four LLM history columns to null, keeping the same conversation row. Used by `POST /conversations/{id}/clear`.
+- `clear_conversation(supabase, conversation_id)` — deletes all messages and resets `lg_contents` and `prev_lg_contents` to null, keeping the same conversation row. Used by `POST /conversations/{id}/clear`.
 - `pre_insert_agent_message(supabase, conversation_id)` — **write-ahead pattern**: inserts a placeholder agent row with `is_error=True` and empty content before any SSE byte is sent. Guarantees the row exists in DB even if the user reloads mid-stream. `on_complete`/`finally` then UPDATE this row with real content.
 - `insert_user_message(supabase, conversation_id, content)` — inserts a user message row.
-- `update_conversation_history(supabase, conversation_id, *, lg_contents, gemini_contents, prev_lg_contents, prev_gemini_contents)` — updates LLM history columns; all four params are keyword-only and optional — only columns whose param is not `None` are written. On each successful turn, the caller passes the current `lg_contents` as `prev_lg_contents` before overwriting — enabling one-level undo for edit. Also used for the **preemptive write** at the start of the edit path: called with just `lg_contents=lg_history_raw` (or `gemini_contents=`) before streaming starts, so that if the LLM fails, a subsequent retry reads the already-correct pre-edit context from `lg_contents` rather than the stale post-prior-turn value.
+- `update_conversation_history(supabase, conversation_id, *, lg_contents, prev_lg_contents)` — updates LLM history columns; both params are keyword-only and optional — only columns whose param is not `None` are written. On each successful turn, the caller passes the current `lg_contents` as `prev_lg_contents` before overwriting — enabling one-level undo for edit. Also used for the **preemptive write** at the start of the edit path: called with just `lg_contents=lg_history_raw` before streaming starts, so that if the LLM fails, a subsequent retry reads the already-correct pre-edit context from `lg_contents` rather than the stale post-prior-turn value.
 - `update_agent_message` / `insert_agent_message` — used by save paths; `update_agent_message` flips `is_error` to `False` on success.
 - `_row_to_message(row)` — maps DB columns to the JSON shape sent to the frontend: `isError`, `steps`, `students`, `scheduleStudents`, `slotData`, `timestamp`.
 
@@ -73,30 +73,9 @@ All conversation state lives in Supabase. Two tables (both RLS-protected via `is
 
 ---
 
-## System instruction rules (classic agent, `app/features/agent/schema.py`)
+## Supervisor routing rules (`app/features/agent/lg/supervisor.py`)
 
-1. Reuse UUID from conversation history — only call `search_students` if UUID not already known
-2. `delete_student` requires explicit "yes" in conversation; must warn about Calendar/Drive removal first
-3. Ask for missing required fields (`mode`, `fee_per_hour`) before calling `create_student`
-4. Multiple search matches → list and ask which student
-5. No search results for update/delete → say so, offer to create instead
-6. After create/update → append one `[student_id:NAME:UUID]` token per affected student at the end of the reply. Example: `[student_id:Lynn:uuid-1] [student_id:Ang:uuid-2]`. `router.py` / `stream_adapter.py` intercepts these tokens via a trailing buffer, strips them from the text stream, and emits a `ui_action` SSE event (`action: "student_links"`) — the raw tokens never reach the browser.
-7. Formatting rules: use markdown only (never HTML tags); tables for lists, bold labels for single records, skip null/empty fields, render Meet/Drive as markdown links, blockquote for notes/homework
-8. `sync_all_students` requires explicit confirmation before calling
-9. Delete confirmation must mention Google Calendar/Drive removal
-10. `get_schedule`: resolve "today"/"tomorrow" using injected date; format as Name | Time table (12-hour); say "No classes on [day]" if empty
-11. `get_fee_summary`: use for any revenue/fee/income query (all students or a specific student); omit month/year if not specified; format as Name | Fee (RM) table with bold Total row; for single-student query, find the student in the returned list and report only their fee
-12. When the user's request involves multiple independent operations, call all relevant tools in a single round. Only serialise when one call's output is required as input for the next.
-13. Templates: call `get_template` directly when the template is clear (e.g. "first approach", "payment"); call `list_templates` first only when ambiguous. Display template as bold title on its own line, then content in a fenced code block (no language tag).
-14. `generate_payment_message`: use when the user asks to generate a payment message/reminder for a student. Omit month/year if not specified (defaults to next month). Ask about carryover only if the user mentions it — otherwise default to `template_type 1`. Display result as bold header (e.g. "**Payment reminder — June 2026**") then message in a fenced code block.
-15. Timetable settings: use `get_timetable_settings` to read current rules and buffer before updating. When the user asks to update rules, show them the proposed new rules and confirm before calling `update_timetable_rules`. For `update_buffer_mins`, validate 0–60 before calling.
-16. After calling `generate_slot_availability` or `download_timetable_image`, tell the user a download button has appeared in the chat. Do NOT describe slot counts or classification details unless the user asks — keep the reply brief (one sentence).
-
----
-
-## Supervisor routing rules (LangGraph mode, `app/features/agent/lg/supervisor.py`)
-
-Key additions and overrides vs. the classic agent rules:
+Key routing rules:
 
 - Answer greetings / meta-questions / capability questions directly without routing (1–2 short sentences)
 - Payment messages always require a student UUID: dispatch to `student_agent` first if only a name is known, then in a separate `dispatch` call route to `template_agent` with the UUID in the task
@@ -105,17 +84,6 @@ Key additions and overrides vs. the classic agent rules:
 - Same agent, multiple entities → ONE combined entry (subagent batches tool calls internally). Different agents → one entry each (parallel via `Send` fan-out)
 - **Never expand or guess student names** — copy the exact name or partial name the user typed; `search_students` does partial matching so "Ang" is a valid task input
 - **UUID propagation:** scan prior replies for `[student_id:NAME:UUID]` tokens and embed known UUIDs directly in task descriptions (e.g. `"Update Ang (id: 2dfa867c-...) fee to 60"`) so the student subagent can call `update_student` without a redundant `search_students` round
-
----
-
-## Classic loop details (`app/features/agent/router.py`)
-
-- Current MYT date is prepended to `SYSTEM_INSTRUCTION` at request time via Python's `datetime` + `pytz` (`pytz.timezone("Asia/Kuala_Lumpur")`) so the LLM can resolve "today"/"tomorrow" before calling `get_schedule`.
-- Runs up to 10 rounds. Tool-calling rounds execute all function calls from the current round in parallel via `asyncio.gather`; each call emits a `step` SSE event immediately. The final text-only round streams `chunk` events token by token.
-- Soft stop check at the start of each round: if `stop_signals.get(request_id)` is set, breaks cleanly without interrupting a mid-tool call.
-- `MUTATION_TOOLS = {"update_student", "delete_student", "update_timetable_rules", "update_buffer_mins", "manage_portal_access"}` — module-level constant used to track which mutations occurred for `self_eval`. `create_student` is tracked separately (check for `result.get("id")`) rather than via this set.
-- `self_eval` runs after each tool round that contains mutations, before moving to the next round.
-- **Persistence paths:** the success branch UPDATEs `effective_id` (`agent_msg_id_to_update` on retry, `pre_agent_id` on normal send) with real content and `is_error=False`, then calls `update_conversation_history`; `was_stopped` / `except` / `finally` UPDATE with `is_error=True`. The `finally` guard `not completed_normally and not agent_msg_saved` prevents double-writes.
 
 ---
 
@@ -149,7 +117,7 @@ START → supervisor ──dispatch──► student_agent  ──► supervisor
 
 ## SSE event contract
 
-Both `POST /agent/chat` (classic) and `POST /agent/lg/chat` (LangGraph) emit the same event types:
+`POST /agent/chat` emits these event types:
 
 | Event type | When | Payload |
 |---|---|---|
@@ -162,23 +130,13 @@ Both `POST /agent/chat` (classic) and `POST /agent/lg/chat` (LangGraph) emit the
 
 `ui_action` uses a generic envelope with an `action` discriminator — adding a new UI-trigger tool only requires a new `action` value, not a new SSE event type.
 
-**Classic loop (`router.py`):** `execute_tool` accepts an optional `side_effects: list[dict]` parameter; the two special match cases (`generate_slot_availability`, `download_timetable_image`) append their `ui_action` dict to the list if the result contains the expected key. The main loop drains it with `yield` after all tools in a round complete.
-
 **LangGraph (`tool_factories.py` + `stream_adapter.py`):** `generate_slot_availability` and `download_timetable_image` call `config.writer({"ui_action": {...}})` inside the tool wrapper; `pipe_langgraph_stream` forwards `custom` mode events as `ui_action` SSE events.
 
 ---
 
 ## Framework choices and trade-offs
 
-### Single agent: raw SDK vs LangChain
-
-The classic agent (`router.py`) uses the **raw Google GenAI Python SDK** directly — manual round loop, manual tool call parsing, manual function response construction. This is the industry-standard choice for single agents: full control, easy debugging, no abstraction overhead. Every line of the loop is visible and owned.
-
-LangChain is more common in prototypes and teams that need rapid provider switching, but for a single agent the abstraction rarely pays for itself. Production teams at major AI labs (Anthropic, OpenAI, Google) use their own raw SDKs internally.
-
-**Switching cost if using raw SDK:** changing provider requires rewriting the client call and message format conversion (`_to_content`, `_content_to_dict`, tool response construction) — roughly a day of work. The loop logic itself is provider-agnostic and stays unchanged.
-
-### Multi-agent: why LangGraph
+### Why LangGraph
 
 The LangGraph path uses `langchain-google-genai` (`ChatGoogleGenerativeAI`) behind LangChain's `BaseChatModel` interface. This was chosen for multi-agent orchestration because:
 
