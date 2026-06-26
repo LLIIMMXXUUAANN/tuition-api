@@ -167,6 +167,26 @@ At 50–100+ tools, the industry uses embedding-based RAG to fetch only the most
 
 ---
 
+**Conversation history summarisation**
+
+When `lg_contents` or `gemini_contents` grows large enough to approach the context window limit or noticeably increase per-request token cost, compress old turns via summarise-and-replace. Not needed now — one admin, conversation is cleared periodically, history is small.
+
+**How to implement when needed:**
+
+1. **Trigger** — before building the request payload, count tokens in the stored history (or use turn count as a cheaper proxy). If above threshold (e.g. 60k tokens), run summarisation.
+
+2. **Summarise** — call a smaller/cheaper model (e.g. `gemini-2.5-flash-lite`) with the oldest N messages and a prompt like `"Summarise this conversation history concisely for an AI assistant's context"`. Use a cheap model — the task is simple and doesn't need the primary model.
+
+3. **Replace in `lg_contents`** — discard the N old messages, prepend the summary as a single `SystemMessage` (or `HumanMessage`), keep the most recent turns verbatim (sliding window of ~10 turns). Save back to DB.
+
+4. **`agent_messages` stays untouched** — the UI always shows the full conversation history. The two stores diverge intentionally: `agent_messages` is the display layer, `lg_contents` is the compressed LLM context layer.
+
+5. **Hook point** — summarise inside `on_complete` in `stream_adapter.py` before saving updated `lg_contents` back to `agent_conversations`, or as a pre-request step at the top of the `lg_chat` endpoint.
+
+`pre_turn_llm_snapshot` on recent user message rows captures the pre-summarisation state, so retry/edit still works correctly for any turn whose snapshot was taken after the last summarisation.
+
+---
+
 **Raw SDK over MCP / CLI**
 
 All service integrations (Supabase, Google Drive/Calendar, Gemini) use their Python SDKs directly.
