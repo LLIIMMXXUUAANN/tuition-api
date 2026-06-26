@@ -304,3 +304,41 @@ Celery + Redis handles one app doing background jobs — one sender, one receive
 - **Kafka** — for when multiple independent services need to react to the same event. Unlike Redis/SQS where a message is consumed and gone, Kafka keeps every message in a log for days — multiple consumer groups can each read independently, and you can rewind and reprocess past events. Switch when: you split into microservices (separate Google cleanup service, analytics service, billing service all subscribing to `StudentDeleted`), you need event replay, or you're processing millions of events per second. Significant operational complexity — partitions, consumer group offsets, schema registry. Most companies never need it.
 
 The progression most teams follow: **Redis → RabbitMQ or SQS → Kafka**, only moving when the current tier's limitations are actually felt.
+
+---
+
+**Direct database connection — asyncpg + SQLAlchemy**
+
+Currently all database access goes through the Supabase client (`app/shared/db.py`), which talks to PostgreSQL via Supabase's PostgREST HTTP API. Connection pooling is handled internally by the Supabase client — the singleton in `db.py` is intentional so the pool is created once and reused across all requests.
+
+Not using asyncpg or SQLAlchemy directly because:
+- **Supabase manages the pool.** No configuration needed — reusing one `AsyncClient` instance is sufficient.
+- **PostgREST gives RLS and auth for free.** Connecting directly to PostgreSQL would require reimplementing row-level security enforcement manually.
+- **Less infrastructure.** No connection string to manage, no pool size to tune, no migration tooling to set up.
+
+**When to switch:** if you move away from Supabase to a self-managed PostgreSQL database (e.g. AWS RDS, Neon, Supabase self-hosted), you would connect directly to Postgres and manage the connection pool yourself.
+
+The standard Python stack for this:
+
+- **asyncpg** — the actual PostgreSQL driver. Fast, async, writes raw SQL. Use `asyncpg.create_pool()` once at startup and borrow connections per request.
+- **SQLAlchemy** — sits on top of asyncpg. Lets you define tables as Python classes and query without writing SQL. Also handles database migrations via Alembic. Use when you have complex table relationships or want migration management.
+
+```python
+# asyncpg only — raw SQL, maximum control
+pool = await asyncpg.create_pool("postgresql://user:pass@host/db", min_size=5, max_size=20)
+
+async def get_db():
+    async with pool.acquire() as conn:
+        return await conn.fetch("SELECT * FROM students")
+
+# SQLAlchemy — ORM, Python objects instead of SQL
+engine = create_async_engine("postgresql+asyncpg://user:pass@host/db", pool_size=10)
+
+async with AsyncSession(engine) as session:
+    result = await session.execute(select(Student).where(Student.status == "Active"))
+    students = result.scalars().all()
+```
+
+The lifespan context (see singleton note in `db.py`) becomes important here — the pool should be created on startup and explicitly closed on shutdown, not lazily initialised on the first request.
+
+**The progression:** Supabase client (now) → asyncpg direct if you need raw performance or leave Supabase → SQLAlchemy on top of asyncpg if you want ORM + migrations.
