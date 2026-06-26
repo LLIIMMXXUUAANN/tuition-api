@@ -26,6 +26,7 @@ from app.features.agent import persistence
 from app.features.agent.lg.stream_adapter import is_routing_relevant, pipe_langgraph_stream
 from app.features.agent.lg.supervisor import make_supervisor
 from app.features.agent.state import stop_signals
+from app.shared.response_models import ConversationResponse, MessagesResponse, OkResponse
 from app.shared.schema import CamelResponse
 from app.auth import require_internal_secret
 from app.shared.db import get_supabase
@@ -38,20 +39,20 @@ router = APIRouter(dependencies=[Depends(require_internal_secret)], default_resp
 # ---------------------------------------------------------------------------
 
 
-@router.get("/conversations/current")
+@router.get("/conversations/current", response_model=ConversationResponse)
 async def get_current_conversation():
     supabase = await get_supabase()
     return await persistence.get_or_create_conversation(supabase)
 
 
-@router.get("/conversations/{conversation_id}/messages")
+@router.get("/conversations/{conversation_id}/messages", response_model=MessagesResponse)
 async def get_conversation_messages(conversation_id: str):
     supabase = await get_supabase()
     msgs = await persistence.get_messages(supabase, conversation_id)
     return {"messages": msgs}
 
 
-@router.post("/conversations/{conversation_id}/clear")
+@router.post("/conversations/{conversation_id}/clear", response_model=OkResponse)
 async def clear_conversation(conversation_id: str):
     supabase = await get_supabase()
     await persistence.clear_conversation(supabase, conversation_id)
@@ -281,7 +282,7 @@ class StopRequest(BaseModel):
     requestId: str | None = None
 
 
-@router.post("/stop")
+@router.post("/stop", response_model=OkResponse)
 async def stop_agent(body: StopRequest):
     if body.requestId:
         stop_signals[body.requestId] = True

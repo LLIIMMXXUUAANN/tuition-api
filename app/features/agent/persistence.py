@@ -145,10 +145,10 @@ def _row_to_message(row: dict) -> dict:
         "role": row["role"],
         "content": row["content"],
         "steps": row.get("steps") or [],
-        "isError": row.get("is_error") or False,
+        "is_error": row.get("is_error") or False,
         "students": row.get("students"),
-        "scheduleStudents": row.get("schedule_students"),
-        "slotData": row.get("slot_data"),
+        "schedule_students": row.get("schedule_students"),
+        "slot_data": row.get("slot_data"),
         "timestamp": row["created_at"],
     }
 

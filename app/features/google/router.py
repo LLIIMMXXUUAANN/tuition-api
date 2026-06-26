@@ -5,6 +5,15 @@ from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 
 from app.auth import require_internal_secret
+from app.shared.response_models import (
+    CreateClassEventResponse,
+    CreateStudentFolderResponse,
+    DeleteStudentGoogleResponse,
+    GoogleCallbackResponse,
+    OkResponse,
+    SyncAllResponse,
+    UpdateClassEventResponse,
+)
 from app.shared.schema import CamelResponse
 from app.features.google.auth import (
     build_google_auth_url,
@@ -86,7 +95,7 @@ async def google_auth_url():
     return RedirectResponse(url=url, status_code=302)
 
 
-@router.get("/callback")
+@router.get("/callback", response_model=GoogleCallbackResponse)
 async def google_callback(
     code: str = Query(...),
     state: str = Query(...),
@@ -109,7 +118,7 @@ async def google_callback(
     return {"ok": True, "message": "Google connected successfully. You can close this tab."}
 
 
-@router.post("/create-class-event")
+@router.post("/create-class-event", response_model=CreateClassEventResponse)
 async def create_class_event(body: CreateClassEventRequest):
     supabase = await get_supabase()
     try:
@@ -125,7 +134,7 @@ async def create_class_event(body: CreateClassEventRequest):
         raise HTTPException(status_code=500, detail=_friendly_google_error(str(exc))) from exc
 
 
-@router.post("/create-student-folder")
+@router.post("/create-student-folder", response_model=CreateStudentFolderResponse)
 async def create_student_folder(body: CreateStudentFolderRequest):
     resolved_mode = (
         "Other Syllabus" if body.mode == "Other Syllabus" else "My Python Syllabus"
@@ -142,7 +151,7 @@ async def create_student_folder(body: CreateStudentFolderRequest):
         raise HTTPException(status_code=500, detail=_friendly_google_error(str(exc))) from exc
 
 
-@router.post("/update-class-event")
+@router.post("/update-class-event", response_model=UpdateClassEventResponse)
 async def update_class_event(body: UpdateClassEventRequest):
     supabase = await get_supabase()
     try:
@@ -203,7 +212,7 @@ async def update_class_event(body: UpdateClassEventRequest):
     }
 
 
-@router.post("/delete-student")
+@router.post("/delete-student", response_model=DeleteStudentGoogleResponse)
 async def delete_student_google_endpoint(body: DeleteStudentRequest):
     drive_url = body.drive_folder_url
     event_ids = body.calendar_event_ids
@@ -225,7 +234,7 @@ async def delete_student_google_endpoint(body: DeleteStudentRequest):
     return result
 
 
-@router.post("/sync-all")
+@router.post("/sync-all", response_model=SyncAllResponse)
 async def sync_all():
     supabase = await get_supabase()
     try:

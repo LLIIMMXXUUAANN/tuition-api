@@ -12,6 +12,12 @@ from app.features.timetable.service import (
     save_rules,
 )
 from app.shared.db import get_supabase
+from app.shared.response_models import (
+    BufferMinsResponse,
+    GenerateSlotsResponse,
+    OkResponse,
+    RulesResponse,
+)
 from app.shared.schema import CamelResponse
 from app.types import ClassSlot
 
@@ -48,7 +54,7 @@ class GenerateSlotsRequest(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-@router.get("/rules")
+@router.get("/rules", response_model=RulesResponse)
 async def get_rules():
     supabase = await get_supabase()
     result = (
@@ -62,7 +68,7 @@ async def get_rules():
     return {"rules": value}
 
 
-@router.post("/rules")
+@router.post("/rules", response_model=OkResponse)
 async def update_rules(body: UpdateRulesRequest):
     supabase = await get_supabase()
     await save_rules(supabase, body.rules)
@@ -74,7 +80,7 @@ async def update_rules(body: UpdateRulesRequest):
 # ---------------------------------------------------------------------------
 
 
-@router.get("/buffer-mins")
+@router.get("/buffer-mins", response_model=BufferMinsResponse)
 async def get_buffer_mins():
     supabase = await get_supabase()
     result = (
@@ -88,7 +94,7 @@ async def get_buffer_mins():
     return {"buffer_mins": buffer_mins}
 
 
-@router.post("/buffer-mins")
+@router.post("/buffer-mins", response_model=OkResponse)
 async def update_buffer_mins(body: UpdateBufferMinsRequest):
     supabase = await get_supabase()
     try:
@@ -103,7 +109,7 @@ async def update_buffer_mins(body: UpdateBufferMinsRequest):
 # ---------------------------------------------------------------------------
 
 
-@router.post("/generate-slots")
+@router.post("/generate-slots", response_model=GenerateSlotsResponse)
 async def generate_slots(body: GenerateSlotsRequest):
     if not body.rules.strip():
         raise HTTPException(status_code=400, detail="rules is required")

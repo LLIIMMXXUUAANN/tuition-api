@@ -6,6 +6,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from app.auth import require_internal_secret
 from app.features.payment.service import PaymentStudentData, PaymentValidationError, build_payment_message
 from app.shared.db import get_supabase
+from app.shared.response_models import PaymentResponse
 from app.shared.schema import CamelResponse
 from app.types import ClassSlot
 
@@ -23,7 +24,7 @@ class GeneratePaymentRequest(BaseModel):
     carryover: float = Field(default=0.0, alias="carryover")
 
 
-@router.post("/generate")
+@router.post("/generate", response_model=PaymentResponse)
 async def generate_payment(body: GeneratePaymentRequest):
     # Validate ranges (mirror TypeScript exactly)
     if body.month < 1 or body.month > 12 or body.year < 2020 or body.year > 2100:

@@ -342,3 +342,153 @@ async with AsyncSession(engine) as session:
 The lifespan context (see singleton note in `db.py`) becomes important here — the pool should be created on startup and explicitly closed on shutdown, not lazily initialised on the first request.
 
 **The progression:** Supabase client (now) → asyncpg direct if you need raw performance or leave Supabase → SQLAlchemy on top of asyncpg if you want ORM + migrations.
+
+---
+
+**`response_model` and schema-first type generation**
+
+FastAPI endpoints currently return raw Supabase data without a declared `response_model`. Adding `response_model` everywhere would mean maintaining a third type definition on top of `src/lib/types.ts` (frontend) and the Supabase schema — three places to update every time a column changes.
+
+Not used because:
+- **API is mostly a thin proxy.** Responses forward Supabase data largely unchanged — no transformation, no field stripping needed.
+- **Triple maintenance at one-person scale.** DB schema + TypeScript types + Pydantic response models = three files to keep in sync manually.
+- **One frontend, one developer.** TypeScript compilation catches shape mismatches on the frontend side — a second validation layer in FastAPI adds cost without proportional benefit.
+
+**The one place it matters now:** any endpoint using `select("*")` — it returns every DB column including anything sensitive added in future. A `response_model` would automatically strip undeclared fields even if a new sensitive column is added tomorrow. Worth adding selectively on student endpoints as a security safeguard.
+
+**When to add it fully:** multiple API consumers (second frontend, mobile app, third-party integration), multiple developers where the response shape needs to be a declared contract between teams, or any endpoint that touches sensitive fields.
+
+**Current state — three places maintained manually:**
+
+```
+Supabase schema (DB columns)           ← actual source of truth today
+    ↓  manual sync
+app/shared/response_models.py          ← hand-written Pydantic models
+    ↓  manual sync
+src/lib/types.ts                       ← hand-written TypeScript types
+```
+
+Add a column → update all three files by hand. Miss one → silent mismatch between DB, API, and frontend.
+
+**How the type maintenance problem is solved in industry — pick one source of truth:**
+
+Rather than maintaining types in three places manually, industry picks one source of truth and generates everything else from it automatically:
+
+```
+One source of truth
+        ↓
+   code generation      ← run after every schema change
+        ↓
+Types in every language that needs them
+```
+
+There are two common approaches:
+
+---
+
+**Option A — DB schema as source of truth (fully automated)**
+
+Generate both Pydantic models and TypeScript types from the live database schema. Nothing is hand-written except the schema migration.
+
+```
+Supabase schema
+    ↓ supabase-pydantic (community tool)
+app/shared/response_models.py          ← auto-generated, never hand-written
+    ↓ FastAPI auto-generates
+openapi.json
+    ↓ openapi-typescript
+src/lib/types.ts                       ← auto-generated, never hand-written
+```
+
+Add a column → run two codegen commands → both Python and TypeScript update automatically.
+
+**Preferred when:** DB changes frequently, the DB schema IS the product design, and the team wants zero manual syncing. Common in data-heavy companies where DB architects drive the design.
+
+**Hidden cost:** generated Pydantic models mirror every DB column including internal ones (`calendar_event_ids`, `created_at`). They expose your full DB shape to the API — a new sensitive column leaks unless you manually exclude it. You often end up maintaining a second layer of "clean" response models on top anyway, partially defeating the automation.
+
+---
+
+**Option B — Pydantic models as source of truth (partial automation)**
+
+You hand-write the Pydantic `response_model` definitions. FastAPI generates an OpenAPI spec from them for free. A codegen tool generates TypeScript types from the spec — the frontend is never hand-written.
+
+```
+app/shared/response_models.py          ← you write and maintain this (one place)
+    ↓ FastAPI auto-generates
+openapi.json                           ← always up to date, free
+    ↓ openapi-typescript
+src/lib/types.ts                       ← auto-generated, never hand-written
+```
+
+Add a field → update `response_models.py` → run one command → `types.ts` updates automatically.
+
+**Preferred when:** the API contract is the product — you control exactly what fields are exposed, with what types, independent of DB internals. Common in public API companies (Stripe, Twilio) where the API shape is versioned and guaranteed. Also preferred when the API and DB evolve independently.
+
+**Advantage over Option A:** explicit control over what leaves the server. Sensitive DB columns are never accidentally exposed — only declared fields pass through.
+
+---
+
+**The most common real-world stack at mid-size companies:**
+
+Neither extreme. Most teams use SQLAlchemy models as the single source of truth for both the DB and the API, sitting between Option A and B:
+
+```
+SQLAlchemy models + Alembic            ← one source of truth in Python code
+    ↓ Alembic                          → DB migration SQL (DB derives from code)
+    ↓ FastAPI response_model           → openapi.json (auto-generated)
+    ↓ openapi-typescript               → src/lib/types.ts (auto-generated)
+```
+
+One Python model definition drives everything — DB schema, API validation, and frontend types. Change the model, run `alembic revision --autogenerate`, commit, done.
+
+**This only applies when using a self-managed PostgreSQL** (AWS RDS, Neon, etc.) — not Supabase, which manages its own schema.
+
+---
+
+**Upgrade path for this project:**
+
+```
+Now (fully manual — current state):
+  Supabase schema
+    → hand-written response_models.py
+    → hand-written src/lib/types.ts
+
+Step 1 — eliminate frontend manual sync (Option B, one command):
+  response_models.py (maintained manually — one place)
+    → FastAPI auto-generates openapi.json
+    → npx openapi-typescript http://localhost:8000/openapi.json -o src/lib/types.ts
+  ← types.ts is never hand-written again; one command keeps it in sync
+
+Step 2 — eliminate Pydantic manual sync (Option A, still on Supabase):
+  Supabase schema
+    → supabase-pydantic → response_models.py (auto-generated)
+    → FastAPI → openapi.json → openapi-typescript → types.ts (auto-generated)
+  ← zero manual type files; run two commands after every schema change
+
+Step 3 — full pipeline on own managed DB:
+  SQLAlchemy models + Alembic (one source of truth)
+    → Alembic → DB migrations
+    → FastAPI response_model → openapi.json → openapi-typescript → types.ts
+  ← one model file, zero manual syncing across DB + backend + frontend
+```
+
+**Protobuf — the enterprise alternative:**
+
+At large scale or when multiple services in different languages need to share the same data shapes, teams use **Protobuf** (Protocol Buffers) as the source of truth instead of OpenAPI. A single `.proto` file defines the data structure once; code generators produce client and server code for Python, TypeScript, Go, Java, and more.
+
+```protobuf
+// student.proto
+message Student {
+  string id = 1;
+  string name = 2;
+  string status = 3;
+  float fee_per_hour = 4;
+}
+```
+
+```bash
+protoc --python_out=. --ts_out=. student.proto
+# generates Python classes + TypeScript interfaces from the same file
+```
+
+Protobuf is paired with **gRPC** (Google's RPC framework) for service-to-service communication — faster than HTTP/JSON, strongly typed end-to-end, with generated client stubs in every language. Used by Google, Netflix, Uber for internal microservice communication. Overkill for a single-language HTTP API but worth knowing as the pattern behind large-scale type sharing.
