@@ -47,14 +47,15 @@ Fine-grained reads, coarse-grained writes. Read tools (`search_students`, `get_s
 ## Persistence (`app/features/agent/persistence.py`)
 
 All conversation state lives in Supabase. Two tables (both RLS-protected via `is_tutor()`):
-- **`agent_conversations`** — one row per conversation, holds `lg_contents` and `gemini_contents` (JSONB) for LLM history
-- **`agent_messages`** — one row per message, holds `role`, `content`, `steps`, `is_error`, `students`, `schedule_students`, `slot_data`, `pre_turn_llm_snapshot` (JSONB), and `created_at`
+- **`agent_conversations`** — one row per conversation, holds `lg_contents`, `gemini_contents`, `prev_lg_contents`, `prev_gemini_contents` (all JSONB) for LLM history and one-level undo
+- **`agent_messages`** — one row per message, holds `role`, `content`, `steps`, `is_error`, `students`, `schedule_students`, `slot_data`, and `created_at`
 
 **Key functions:**
 - `get_or_create_conversation(supabase)` — fetches the most recent conversation row (or creates one if the table is empty); returns `{ id, messages }` in a single call. Used by `GET /conversations/current`.
-- `clear_conversation(supabase, conversation_id)` — deletes all messages and resets `lg_contents`/`gemini_contents` to null, keeping the same conversation row. Used by `POST /conversations/{id}/clear`.
+- `clear_conversation(supabase, conversation_id)` — deletes all messages and resets all four LLM history columns to null, keeping the same conversation row. Used by `POST /conversations/{id}/clear`.
 - `pre_insert_agent_message(supabase, conversation_id)` — **write-ahead pattern**: inserts a placeholder agent row with `is_error=True` and empty content before any SSE byte is sent. Guarantees the row exists in DB even if the user reloads mid-stream. `on_complete`/`finally` then UPDATE this row with real content.
-- `insert_user_message(supabase, conversation_id, content, pre_turn_llm_snapshot)` — inserts a user message with the full LLM history snapshot frozen at that point. Used by retry/edit to restore prior context without client-side history management.
+- `insert_user_message(supabase, conversation_id, content)` — inserts a user message row.
+- `update_conversation_history(supabase, conversation_id, *, lg_contents, gemini_contents, prev_lg_contents, prev_gemini_contents)` — updates LLM history columns; all four params are keyword-only and optional — only columns whose param is not `None` are written. On each successful turn, the caller passes the current `lg_contents` as `prev_lg_contents` before overwriting — enabling one-level undo for edit. Also used for the **preemptive write** at the start of the edit path: called with just `lg_contents=lg_history_raw` (or `gemini_contents=`) before streaming starts, so that if the LLM fails, a subsequent retry reads the already-correct pre-edit context from `lg_contents` rather than the stale post-prior-turn value.
 - `update_agent_message` / `insert_agent_message` — used by save paths; `update_agent_message` flips `is_error` to `False` on success.
 - `_row_to_message(row)` — maps DB columns to the JSON shape sent to the frontend: `isError`, `steps`, `students`, `scheduleStudents`, `slotData`, `timestamp`.
 
@@ -114,7 +115,7 @@ Key additions and overrides vs. the classic agent rules:
 - Soft stop check at the start of each round: if `stop_signals.get(request_id)` is set, breaks cleanly without interrupting a mid-tool call.
 - `MUTATION_TOOLS = {"update_student", "delete_student", "update_timetable_rules", "update_buffer_mins", "manage_portal_access"}` — module-level constant used to track which mutations occurred for `self_eval`. `create_student` is tracked separately (check for `result.get("id")`) rather than via this set.
 - `self_eval` runs after each tool round that contains mutations, before moving to the next round.
-- **Persistence paths:** `on_complete` (normal finish) UPDATEs `pre_agent_id` with real content + `is_error=False`; `was_stopped` / `except` / `finally` UPDATE with `is_error=True`. The `finally` guard `not completed_normally and not agent_msg_saved` prevents double-writes.
+- **Persistence paths:** the success branch UPDATEs `effective_id` (`agent_msg_id_to_update` on retry, `pre_agent_id` on normal send) with real content and `is_error=False`, then calls `update_conversation_history`; `was_stopped` / `except` / `finally` UPDATE with `is_error=True`. The `finally` guard `not completed_normally and not agent_msg_saved` prevents double-writes.
 
 ---
 

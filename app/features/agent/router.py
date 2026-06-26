@@ -234,7 +234,7 @@ async def agent_chat(body: AgentChatRequest):
     agent_msg_id_to_update: str | None = None
 
     if body.retry_message_id:
-        # Retry: reload snapshot from the preceding user message
+        # Retry: failed turn never updated gemini_contents, so it's already the pre-failure state
         failed = await persistence.get_message_by_id(supabase, body.retry_message_id)
         if not failed:
             return JSONResponse({"error": "Message not found"}, status_code=404)
@@ -243,30 +243,26 @@ async def agent_chat(body: AgentChatRequest):
         )
         if not prior_user:
             return JSONResponse({"error": "No preceding user message found"}, status_code=400)
-        snapshot = prior_user.get("pre_turn_llm_snapshot") or {}
-        gemini_history_raw = snapshot.get("history") or []
         user_message_content = prior_user["content"]
         agent_msg_id_to_update = failed["id"]
     elif body.edit_user_message_id:
-        # Edit: delete old user message and everything after it, insert new user message
+        # Edit: use prev_gemini_contents (state before the latest completed turn)
         old_user = await persistence.get_message_by_id(supabase, body.edit_user_message_id)
         if not old_user:
             return JSONResponse({"error": "Message not found"}, status_code=404)
-        snapshot = old_user.get("pre_turn_llm_snapshot") or {}
-        gemini_history_raw = snapshot.get("history") or []
+        gemini_history_raw = conv.get("prev_gemini_contents") or []
         user_message_content = body.new_content or ""
         await persistence.delete_messages_from(supabase, body.conversation_id, old_user["created_at"])
-        await persistence.insert_user_message(
-            supabase, body.conversation_id, user_message_content,
-            pre_turn_llm_snapshot={"mode": "gemini", "history": gemini_history_raw},
+        await persistence.insert_user_message(supabase, body.conversation_id, user_message_content)
+        # Preemptive write: if the LLM fails, retry reads gemini_contents directly —
+        # reset it now so retry uses the correct pre-edit state instead of the stale post-turn state.
+        await persistence.update_conversation_history(
+            supabase, body.conversation_id, gemini_contents=gemini_history_raw
         )
     else:
         # Normal send
         user_message_content = body.message or ""
-        await persistence.insert_user_message(
-            supabase, body.conversation_id, user_message_content,
-            pre_turn_llm_snapshot={"mode": "gemini", "history": gemini_history_raw},
-        )
+        await persistence.insert_user_message(supabase, body.conversation_id, user_message_content)
 
     # Pre-insert placeholder agent row BEFORE streaming starts (same pattern as lg_chat).
     pre_agent_id: str | None = None
@@ -473,7 +469,9 @@ async def agent_chat(body: AgentChatRequest):
                             slot_data=accumulated_slot_data,
                         )
                     await persistence.update_conversation_history(
-                        supabase, body.conversation_id, gemini_contents=history_dicts
+                        supabase, body.conversation_id,
+                        gemini_contents=history_dicts,
+                        prev_gemini_contents=gemini_history_raw,
                     )
                     agent_msg_saved = True
                 except Exception:
@@ -570,6 +568,7 @@ async def lg_chat(body: AgentChatRequest):
     agent_msg_id_to_update: str | None = None
 
     if body.retry_message_id:
+        # Retry: failed turn never updated lg_contents, so it's already the pre-failure state
         failed = await persistence.get_message_by_id(supabase, body.retry_message_id)
         if not failed:
             return JSONResponse({"error": "Message not found"}, status_code=404)
@@ -578,28 +577,25 @@ async def lg_chat(body: AgentChatRequest):
         )
         if not prior_user:
             return JSONResponse({"error": "No preceding user message found"}, status_code=400)
-        snapshot = prior_user.get("pre_turn_llm_snapshot") or {}
-        lg_history_raw = snapshot.get("history") or []
         user_message_content = prior_user["content"]
         agent_msg_id_to_update = failed["id"]
     elif body.edit_user_message_id:
+        # Edit: use prev_lg_contents (state before the latest completed turn)
         old_user = await persistence.get_message_by_id(supabase, body.edit_user_message_id)
         if not old_user:
             return JSONResponse({"error": "Message not found"}, status_code=404)
-        snapshot = old_user.get("pre_turn_llm_snapshot") or {}
-        lg_history_raw = snapshot.get("history") or []
+        lg_history_raw = conv.get("prev_lg_contents") or []
         user_message_content = body.new_content or ""
         await persistence.delete_messages_from(supabase, body.conversation_id, old_user["created_at"])
-        await persistence.insert_user_message(
-            supabase, body.conversation_id, user_message_content,
-            pre_turn_llm_snapshot={"mode": "lg", "history": lg_history_raw},
+        await persistence.insert_user_message(supabase, body.conversation_id, user_message_content)
+        # Preemptive write: if the LLM fails, retry reads lg_contents directly —
+        # reset it now so retry uses the correct pre-edit state instead of the stale post-turn state.
+        await persistence.update_conversation_history(
+            supabase, body.conversation_id, lg_contents=lg_history_raw
         )
     else:
         user_message_content = body.message or ""
-        await persistence.insert_user_message(
-            supabase, body.conversation_id, user_message_content,
-            pre_turn_llm_snapshot={"mode": "lg", "history": lg_history_raw},
-        )
+        await persistence.insert_user_message(supabase, body.conversation_id, user_message_content)
 
     # Build LangGraph message list
     if lg_history_raw:
@@ -666,7 +662,9 @@ async def lg_chat(body: AgentChatRequest):
                 agent_msg_saved = True
                 if stored is not None:
                     await persistence.update_conversation_history(
-                        supabase, body.conversation_id, lg_contents=stored
+                        supabase, body.conversation_id,
+                        lg_contents=stored,
+                        prev_lg_contents=lg_history_raw,
                     )
             except Exception:
                 print("[on_complete] DB save failed:")

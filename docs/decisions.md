@@ -104,9 +104,10 @@ LangGraph checkpointers are designed for managing many concurrent threads, each 
 
 The custom persistence layer (`persistence.py`) also enables features that checkpointers don't provide out of the box:
 - **Pre-insert write-ahead pattern** — agent row inserted with `is_error=True` before SSE starts; guarantees the row exists even if the user reloads mid-stream
-- **`pre_turn_llm_snapshot`** on user message rows — full LLM history frozen at each turn boundary, enabling server-side retry (no client history needed) and edit (truncate + replay from snapshot)
+- **`prev_lg_contents` / `prev_gemini_contents`** on the conversation row — updated every successful turn with the prior state, enabling one-level undo for latest-message edit. The earlier design stored a `pre_turn_llm_snapshot` on every user message row to support retrying any historical error, not just the latest one. That per-row snapshot was dropped once retry and edit were restricted to the latest message only (consistent with how Claude.ai behaves): failed turns never update `lg_contents`, so `lg_contents` is already the correct pre-failure state for retry; edit only ever reaches one turn back, so a single `prev_*` column on the conversation row is sufficient. No per-message snapshot overhead needed.
+- **Preemptive write on edit** — at the start of the edit path, `lg_contents` (and `gemini_contents`) is immediately reset to the pre-edit value (`prev_lg_contents`/`prev_gemini_contents`) before streaming begins. This ensures that if the LLM fails during an edit, the subsequent retry reads the correct pre-edit context — not the stale post-prior-turn state. The alternative (no preemptive write) would leave `lg_contents` pointing at stale history if the edit fails, causing retry to use the wrong context, including across page reloads.
 - **Cross-device access** — any device calling `GET /conversations/current` gets the same history, since there is no localStorage dependency
-- **`clear_conversation`** — wipes messages and resets LLM history columns on the same row, keeping the conversation ID stable
+- **`clear_conversation`** — wipes messages and resets all LLM history columns on the same row, keeping the conversation ID stable
 
 **When to add `AsyncPostgresSaver`:** if human-in-the-loop approval flows are needed (e.g. agent proposes a schedule change, tutor clicks Approve before it's committed), add `AsyncPostgresSaver` pointing at Supabase alongside the existing tables — not replacing them. The checkpointer handles graph resumption from a specific node boundary; `agent_messages` stays as-is for the chat UI. The two layers coexist independently.
 
@@ -183,7 +184,7 @@ When `lg_contents` or `gemini_contents` grows large enough to approach the conte
 
 5. **Hook point** — summarise inside `on_complete` in `stream_adapter.py` before saving updated `lg_contents` back to `agent_conversations`, or as a pre-request step at the top of the `lg_chat` endpoint.
 
-`pre_turn_llm_snapshot` on recent user message rows captures the pre-summarisation state, so retry/edit still works correctly for any turn whose snapshot was taken after the last summarisation.
+**Compatibility with retry/edit:** since both are restricted to the latest message only, summarisation does not break them. Summarisation compresses old turns; `prev_lg_contents` always captures the state immediately before the latest turn — which is always in the unsummarised recent window. Retry uses `lg_contents` directly (failed turns never update it); edit reads `prev_lg_contents`. Neither operation ever needs to reach back past the summarisation boundary.
 
 ---
 

@@ -33,6 +33,8 @@ async def clear_conversation(supabase, conversation_id: str) -> None:
     await supabase.table("agent_conversations").update({
         "lg_contents": None,
         "gemini_contents": None,
+        "prev_lg_contents": None,
+        "prev_gemini_contents": None,
     }).eq("id", conversation_id).execute()
 
 
@@ -53,29 +55,27 @@ async def update_conversation_history(
     *,
     lg_contents: list | None = None,
     gemini_contents: list | None = None,
+    prev_lg_contents: list | None = None,
+    prev_gemini_contents: list | None = None,
 ) -> None:
     updates: dict = {"updated_at": datetime.now(timezone.utc).isoformat()}
     if lg_contents is not None:
         updates["lg_contents"] = lg_contents
     if gemini_contents is not None:
         updates["gemini_contents"] = gemini_contents
+    if prev_lg_contents is not None:
+        updates["prev_lg_contents"] = prev_lg_contents
+    if prev_gemini_contents is not None:
+        updates["prev_gemini_contents"] = prev_gemini_contents
     await supabase.table("agent_conversations").update(updates).eq("id", conversation_id).execute()
 
 
-async def insert_user_message(
-    supabase,
-    conversation_id: str,
-    content: str,
-    pre_turn_llm_snapshot: dict | None,
-) -> str:
-    row: dict = {
+async def insert_user_message(supabase, conversation_id: str, content: str) -> str:
+    res = await supabase.table("agent_messages").insert({
         "conversation_id": conversation_id,
         "role": "user",
         "content": content,
-    }
-    if pre_turn_llm_snapshot is not None:
-        row["pre_turn_llm_snapshot"] = pre_turn_llm_snapshot
-    res = await supabase.table("agent_messages").insert(row).execute()
+    }).execute()
     return res.data[0]["id"]
 
 
