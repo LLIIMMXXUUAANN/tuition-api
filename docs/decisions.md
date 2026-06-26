@@ -195,3 +195,35 @@ All service integrations (Supabase, Google Drive/Calendar, Gemini) use their Pyt
 - **MCP** is designed for exposing tools to a remotely-running AI model or in a multi-user environment with isolated tool context. Neither applies here — one admin, route handlers and tool calls run in the same process.
 - **CLI** assumes a shell environment invocable per-request. A FastAPI service on a cloud platform is not that shell.
 - **Raw SDK calls** are the natural fit: no extra infrastructure, full Python type stubs, straightforward async error handling, no abstraction layer.
+
+---
+
+**Sentry (error tracking)**
+
+The backend uses Python's standard `logging` module — `logger.exception(msg)` emits ERROR-level entries with a full traceback to stdout, which is captured by the host platform's log aggregator (Render, Railway, etc.). This is sufficient for a single-admin local deployment where the developer can watch the terminal.
+
+Not used because:
+- **Low volume, one admin.** Errors are noticed immediately; no need for automated alerting.
+- **Stdout is enough.** The host platform's log tail is the only viewer.
+- **Zero infra.** No Sentry project, DSN, or account needed.
+
+**When to add it:** any time you deploy and need to be notified of production errors without watching the terminal — or when multiple users hit the service and errors need grouping, deduplication, and a searchable history.
+
+**How to add it:**
+
+```python
+# requirements.txt
+sentry-sdk[fastapi]>=2.0
+
+# app/main.py  (top of file, before FastAPI app is created)
+import sentry_sdk
+sentry_sdk.init(
+    dsn=settings.SENTRY_DSN,           # add to .env
+    traces_sample_rate=0.1,            # 10% of requests get performance traces
+    send_default_pii=False,
+)
+```
+
+No other changes needed — `sentry-sdk[fastapi]` auto-instruments FastAPI request/response cycles and captures any unhandled exception. Calls to `logger.exception(...)` are also forwarded to Sentry automatically because Sentry installs a `LoggingIntegration` by default (level=ERROR).
+
+**Alerts:** configure Sentry to email or Slack you on the first occurrence of each new issue. That replaces manually tailing logs in production.

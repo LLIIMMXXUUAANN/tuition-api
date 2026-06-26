@@ -5,7 +5,7 @@ Port of src/features/agent/lib/lg/tool-factories.ts.
 
 from __future__ import annotations
 
-from typing import Literal, Optional
+from typing import Literal
 
 from app.types import PaymentMethod, StudentMode, StudentStatus, WeekDay
 
@@ -52,7 +52,7 @@ class ClassSlotInput(BaseModel):
 
 
 class NoArgInput(BaseModel):
-    reason: Optional[str] = Field(default=None, description="Optional reason for invoking this tool")
+    reason: str | None = Field(default=None, description="Optional reason for invoking this tool")
 
 
 class CannotCompleteInput(BaseModel):
@@ -110,7 +110,7 @@ class GetStudentInput(BaseModel):
 
 
 class ListStudentsInput(BaseModel):
-    status: Optional[StudentStatus] = Field(
+    status: StudentStatus | None = Field(
         default=None,
         description="Filter by student status. Omit for all students.",
     )
@@ -141,26 +141,26 @@ class GetScheduleInput(BaseModel):
 
 
 class GetFeeSummaryInput(BaseModel):
-    month: Optional[int] = Field(default=None, description="Month number 1–12. Omit for current month.")
-    year: Optional[int] = Field(default=None, description="4-digit year. Omit for current year.")
+    month: int | None = Field(default=None, description="Month number 1–12. Omit for current month.")
+    year: int | None = Field(default=None, description="4-digit year. Omit for current year.")
 
 
 class CreateStudentInput(BaseModel):
     name: str = Field(description="Student's full name")
     mode: StudentMode
     fee_per_hour: float = Field(description="Hourly fee in RM")
-    payment_method: Optional[PaymentMethod] = Field(default=None, description="Defaults to 'Monthly'.")
-    status: Optional[StudentStatus] = Field(default=None, description="Defaults to 'Active'.")
-    class_schedule: Optional[list[ClassSlotInput]] = Field(default=None, description="Weekly class slots")
-    contact_person: Optional[str] = Field(default=None, description="Parent/guardian name")
-    contact_phone: Optional[str] = Field(default=None, description="Parent/guardian phone")
-    student_phone: Optional[str] = Field(default=None, description="Student's own phone")
-    today_homework: Optional[str] = Field(default=None, description="Current homework assignment")
-    notes: Optional[str] = Field(default=None, description="Free-form notes")
-    latest_payment: Optional[str] = Field(default=None, description="Latest payment date/info")
-    google_meet_link: Optional[str] = Field(default=None, description="Google Meet link")
-    google_drive_link: Optional[str] = Field(default=None, description="Google Drive folder link")
-    access_emails: Optional[list[str]] = Field(default=None, description="Portal access emails")
+    payment_method: PaymentMethod | None = Field(default=None, description="Defaults to 'Monthly'.")
+    status: StudentStatus | None = Field(default=None, description="Defaults to 'Active'.")
+    class_schedule: list[ClassSlotInput] | None = Field(default=None, description="Weekly class slots")
+    contact_person: str | None = Field(default=None, description="Parent/guardian name")
+    contact_phone: str | None = Field(default=None, description="Parent/guardian phone")
+    student_phone: str | None = Field(default=None, description="Student's own phone")
+    today_homework: str | None = Field(default=None, description="Current homework assignment")
+    notes: str | None = Field(default=None, description="Free-form notes")
+    latest_payment: str | None = Field(default=None, description="Latest payment date/info")
+    google_meet_link: str | None = Field(default=None, description="Google Meet link")
+    google_drive_link: str | None = Field(default=None, description="Google Drive folder link")
+    access_emails: list[str] | None = Field(default=None, description="Portal access emails")
 
 
 # ---------------------------------------------------------------------------
@@ -176,10 +176,10 @@ class GetTemplateInput(BaseModel):
 
 class GeneratePaymentMessageInput(BaseModel):
     student_id: str = Field(description="Student UUID")
-    month: Optional[int] = Field(default=None, description="Month number 1–12. Omit for next month.")
-    year: Optional[int] = Field(default=None, description="4-digit year. Omit for next year.")
-    template_type: Optional[int] = Field(default=None, description="1 or 2. Defaults to 1.")
-    carryover: Optional[float] = Field(default=None, description="Carryover amount in RM. Required for template_type 2.")
+    month: int | None = Field(default=None, description="Month number 1–12. Omit for next month.")
+    year: int | None = Field(default=None, description="4-digit year. Omit for next year.")
+    template_type: int | None = Field(default=None, description="1 or 2. Defaults to 1.")
+    carryover: float | None = Field(default=None, description="Carryover amount in RM. Required for template_type 2.")
 
 
 # ---------------------------------------------------------------------------
@@ -196,7 +196,7 @@ class UpdateBufferMinsInput(BaseModel):
 
 
 class GenerateSlotAvailabilityInput(BaseModel):
-    student_availability: Optional[str] = Field(
+    student_availability: str | None = Field(
         default=None,
         description="Optional description of a prospective student's availability constraints"
     )
@@ -216,25 +216,25 @@ def make_student_tools(supabase) -> list[StructuredTool]:
     async def _get_student(id: str) -> dict:
         return await get_student(supabase, id)
 
-    async def _list_students(status: Optional[str] = None) -> dict:
+    async def _list_students(status: str | None = None) -> dict:
         return await list_students(supabase, {"status": status} if status else {})
 
     async def _create_student(
         name: str,
         mode: str,
         fee_per_hour: float,
-        payment_method: Optional[str] = None,
-        status: Optional[str] = None,
-        class_schedule: Optional[list[ClassSlotInput]] = None,
-        contact_person: Optional[str] = None,
-        contact_phone: Optional[str] = None,
-        student_phone: Optional[str] = None,
-        today_homework: Optional[str] = None,
-        notes: Optional[str] = None,
-        latest_payment: Optional[str] = None,
-        google_meet_link: Optional[str] = None,
-        google_drive_link: Optional[str] = None,
-        access_emails: Optional[list[str]] = None,
+        payment_method: str | None = None,
+        status: str | None = None,
+        class_schedule: list[ClassSlotInput] | None = None,
+        contact_person: str | None = None,
+        contact_phone: str | None = None,
+        student_phone: str | None = None,
+        today_homework: str | None = None,
+        notes: str | None = None,
+        latest_payment: str | None = None,
+        google_meet_link: str | None = None,
+        google_drive_link: str | None = None,
+        access_emails: list[str] | None = None,
     ) -> dict:
         params = {
             "name": name,
@@ -268,7 +268,7 @@ def make_student_tools(supabase) -> list[StructuredTool]:
     async def _delete_student(id: str) -> dict:
         return await delete_student(supabase, id)
 
-    async def _sync_all_students(reason: Optional[str] = None) -> dict:
+    async def _sync_all_students(reason: str | None = None) -> dict:
         return await run_sync_all(supabase)
 
     async def _manage_portal_access(student_id: str, action: str, email: str) -> dict:
@@ -277,7 +277,7 @@ def make_student_tools(supabase) -> list[StructuredTool]:
     async def _get_schedule(day: str) -> dict:
         return await get_schedule(supabase, day)
 
-    async def _get_fee_summary(month: Optional[int] = None, year: Optional[int] = None) -> dict:
+    async def _get_fee_summary(month: int | None = None, year: int | None = None) -> dict:
         return await get_fee_summary(supabase, month, year)
 
     return [
@@ -349,7 +349,7 @@ def make_student_tools(supabase) -> list[StructuredTool]:
 def make_template_tools(supabase) -> list[StructuredTool]:
     """Return all 3 template tools bound to the given Supabase client."""
 
-    def _list_templates(reason: Optional[str] = None) -> dict:
+    def _list_templates(reason: str | None = None) -> dict:
         return list_templates()
 
     async def _get_template(id: str) -> dict:
@@ -357,10 +357,10 @@ def make_template_tools(supabase) -> list[StructuredTool]:
 
     async def _generate_payment_message(
         student_id: str,
-        month: Optional[int] = None,
-        year: Optional[int] = None,
-        template_type: Optional[int] = None,
-        carryover: Optional[float] = None,
+        month: int | None = None,
+        year: int | None = None,
+        template_type: int | None = None,
+        carryover: float | None = None,
     ) -> dict:
         params = {
             "student_id": student_id,
@@ -401,7 +401,7 @@ def make_template_tools(supabase) -> list[StructuredTool]:
 def make_timetable_tools(supabase) -> list[StructuredTool]:
     """Return all 5 timetable tools bound to the given Supabase client."""
 
-    async def _get_timetable_settings(reason: Optional[str] = None) -> dict:
+    async def _get_timetable_settings(reason: str | None = None) -> dict:
         return await get_timetable_settings(supabase)
 
     async def _update_timetable_rules(rules: str) -> dict:
@@ -410,7 +410,7 @@ def make_timetable_tools(supabase) -> list[StructuredTool]:
     async def _update_buffer_mins(buffer_mins: int) -> dict:
         return await update_buffer_mins(supabase, buffer_mins)
 
-    async def _generate_slot_availability(student_availability: Optional[str] = None) -> dict:
+    async def _generate_slot_availability(student_availability: str | None = None) -> dict:
         result = await generate_slot_availability(supabase, student_availability or "")
         try:
             writer = get_stream_writer()
@@ -420,7 +420,7 @@ def make_timetable_tools(supabase) -> list[StructuredTool]:
             pass
         return result
 
-    async def _download_timetable_image(reason: Optional[str] = None) -> dict:
+    async def _download_timetable_image(reason: str | None = None) -> dict:
         result = await download_timetable_image(supabase)
         try:
             writer = get_stream_writer()

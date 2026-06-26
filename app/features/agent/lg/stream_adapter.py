@@ -7,7 +7,7 @@ chunk, step, done, stopped, error, ui_action.
 from __future__ import annotations
 
 import json
-from typing import AsyncGenerator, AsyncIterable, Awaitable, Callable, Optional
+from typing import AsyncGenerator, AsyncIterable, Awaitable, Callable
 
 from langchain_core.messages import (
     AIMessage,
@@ -93,8 +93,8 @@ def is_routing_relevant(msg: BaseMessage) -> bool:
 
 async def pipe_langgraph_stream(
     stream: AsyncIterable,
-    request_id: Optional[str] = None,
-    on_complete: Optional[Callable[..., Awaitable[None]]] = None,
+    request_id: str | None = None,
+    on_complete: Callable[..., Awaitable[None]] | None = None,
 ) -> AsyncGenerator[dict, None]:
     """Async generator that translates a LangGraph stream into SSE event dicts.
 

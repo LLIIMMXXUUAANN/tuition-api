@@ -7,7 +7,9 @@ from __future__ import annotations
 
 import datetime
 import json
-import traceback
+import logging
+
+logger = logging.getLogger(__name__)
 
 import pytz
 from fastapi import APIRouter, Depends
@@ -157,8 +159,7 @@ async def agent_chat(body: AgentChatRequest):
                 relevant = [m for m in full_history if is_routing_relevant(m)]
                 stored = messages_to_dict(relevant)
             except Exception:
-                print("[on_complete] messages_to_dict failed:")
-                traceback.print_exc()
+                logger.exception("[on_complete] messages_to_dict failed")
                 stored = None
 
             effective_id = agent_msg_id_to_update or pre_agent_id
@@ -189,8 +190,7 @@ async def agent_chat(body: AgentChatRequest):
                         prev_lg_contents=lg_history_raw,
                     )
             except Exception:
-                print("[on_complete] DB save failed:")
-                traceback.print_exc()
+                logger.exception("[on_complete] DB save failed")
 
         try:
             lg_stream = supervisor.astream(
