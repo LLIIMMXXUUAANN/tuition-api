@@ -227,3 +227,80 @@ sentry_sdk.init(
 No other changes needed — `sentry-sdk[fastapi]` auto-instruments FastAPI request/response cycles and captures any unhandled exception. Calls to `logger.exception(...)` are also forwarded to Sentry automatically because Sentry installs a `LoggingIntegration` by default (level=ERROR).
 
 **Alerts:** configure Sentry to email or Slack you on the first occurrence of each new issue. That replaces manually tailing logs in production.
+
+---
+
+**Celery + Redis (background task queue)**
+
+DELETE operations that trigger Google Calendar/Drive cleanup currently run synchronously — the HTTP response waits for cleanup to finish and returns any Google errors (`driveError`, `calendarError`) directly to the frontend. This is correct for one admin at low volume.
+
+Not used because:
+- **One admin, rare deletes.** Google cleanup failing once every few months; `logger.exception()` in stdout is sufficient visibility.
+- **Inline warnings are better UX here.** The frontend shows an amber warning immediately if Google cleanup fails. Moving to async loses that feedback with no easy replacement.
+- **Three processes instead of one.** Celery + Redis means running a web server, a worker process, and a Redis instance — permanently, in both local dev and production.
+
+**When to add it:** multiple admins, high delete volume, or Google cleanup starts failing often enough that you need guaranteed retries with alerting rather than manual log inspection.
+
+**How it works:**
+
+```
+DELETE /api/students/{id}
+  → DB delete (fast, synchronous)
+  → enqueue cleanup_google.delay(student_id)   ← hands off immediately
+  → return 204
+
+Celery worker (separate process):
+  → picks up job from Redis
+  → runs Google Calendar + Drive cleanup
+  → if fails: retry in 60s → 5min → 30min (exponential backoff)
+  → if exhausted: log + send admin email/Slack alert
+```
+
+**How to add it:**
+
+```python
+# requirements.txt
+celery[redis]>=5.0
+redis>=5.0
+
+# app/celery.py
+from celery import Celery
+celery = Celery("tuition", broker="redis://localhost:6379/0")
+
+# app/features/students/tasks.py
+from app.celery import celery
+
+@celery.task(bind=True, max_retries=3)
+def cleanup_google_task(self, student_id: str):
+    try:
+        # Google Calendar + Drive cleanup logic here
+        ...
+    except Exception as exc:
+        raise self.retry(exc=exc, countdown=60)
+
+# app/features/students/router.py — change delete endpoint
+await service.delete_student_db_only(supabase, student_id)
+cleanup_google_task.delay(student_id)
+return Response(status_code=204)
+```
+
+**What you lose:** the inline `driveError` / `calendarError` amber warning in `StudentForm`. Replace it with a Sentry alert or admin email on task exhaustion — pair this change with Sentry so failures surface somewhere.
+
+**To run locally:**
+```bash
+redis-server                        # terminal 1
+uvicorn app.main:app --reload       # terminal 2
+celery -A app.celery worker -l info # terminal 3
+```
+
+**When to upgrade beyond Celery + Redis:**
+
+Celery + Redis handles one app doing background jobs — one sender, one receiver, tightly coupled. When the architecture grows beyond that, switch the broker:
+
+- **RabbitMQ** — drop-in replacement for Redis as the Celery broker. Better routing control (exchange types, dead letter queues), more reliable message delivery guarantees. Switch when Redis feels too simple but you're still in a single-app world: `broker="amqp://localhost"` in `celery.py`, no other code changes.
+
+- **SQS (AWS)** — managed message queue hosted by AWS. No Redis server to run or maintain — AWS handles availability and scaling. Good fit when already on AWS infrastructure. Still one sender, one receiver per message (like Redis), but cloud-managed. Use `celery[sqs]` as the broker.
+
+- **Kafka** — for when multiple independent services need to react to the same event. Unlike Redis/SQS where a message is consumed and gone, Kafka keeps every message in a log for days — multiple consumer groups can each read independently, and you can rewind and reprocess past events. Switch when: you split into microservices (separate Google cleanup service, analytics service, billing service all subscribing to `StudentDeleted`), you need event replay, or you're processing millions of events per second. Significant operational complexity — partitions, consumer group offsets, schema registry. Most companies never need it.
+
+The progression most teams follow: **Redis → RabbitMQ or SQS → Kafka**, only moving when the current tier's limitations are actually felt.
