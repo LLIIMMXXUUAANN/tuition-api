@@ -14,7 +14,6 @@ from app.shared.response_models import (
     SyncAllResponse,
     UpdateClassEventResponse,
 )
-from app.shared.schema import CamelResponse
 from app.features.google.auth import (
     build_google_auth_url,
     exchange_code_for_refresh_token,
@@ -37,7 +36,7 @@ from app.features.google.sync import sync_all_students
 from app.shared.db import get_supabase
 from app.types import ClassSlot
 
-router = APIRouter(dependencies=[Depends(require_internal_secret)], default_response_class=CamelResponse)
+router = APIRouter(dependencies=[Depends(require_internal_secret)])
 
 
 # ---------------------------------------------------------------------------

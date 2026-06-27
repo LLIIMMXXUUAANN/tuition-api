@@ -1,7 +1,7 @@
 """Timetable settings and slot-generation endpoints."""
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel
 
 from app.auth import require_internal_secret
 from app.features.timetable.service import (
@@ -18,10 +18,9 @@ from app.shared.response_models import (
     OkResponse,
     RulesResponse,
 )
-from app.shared.schema import CamelResponse
 from app.types import ClassSlot
 
-router = APIRouter(dependencies=[Depends(require_internal_secret)], default_response_class=CamelResponse)
+router = APIRouter(dependencies=[Depends(require_internal_secret)])
 
 
 # ---------------------------------------------------------------------------
@@ -34,19 +33,14 @@ class UpdateRulesRequest(BaseModel):
 
 
 class UpdateBufferMinsRequest(BaseModel):
-    model_config = ConfigDict(populate_by_name=True)
-
-    # Accept both camelCase (TypeScript client) and snake_case
-    buffer_mins: int = Field(alias="bufferMins")
+    buffer_mins: int
 
 
 class GenerateSlotsRequest(BaseModel):
-    model_config = ConfigDict(populate_by_name=True)
-
     rules: str
-    student_availability: str = Field(default="", alias="studentAvailability")
-    booked_slots: list[ClassSlot] = Field(default_factory=list, alias="bookedSlots")
-    buffer_mins: int = Field(default=15, alias="bufferMins")
+    student_availability: str = ""
+    booked_slots: list[ClassSlot] = []
+    buffer_mins: int = 15
 
 
 # ---------------------------------------------------------------------------

@@ -6,7 +6,6 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from app.auth import require_internal_secret
-from app.shared.schema import CamelResponse
 from app.shared.db import get_supabase
 from app.shared.response_models import (
     CreateStudentResponse,
@@ -21,7 +20,7 @@ from app.features.students.service import (
     delete_student as svc_delete,
 )
 
-router = APIRouter(dependencies=[Depends(require_internal_secret)], default_response_class=CamelResponse)
+router = APIRouter(dependencies=[Depends(require_internal_secret)])
 
 
 # ---------------------------------------------------------------------------

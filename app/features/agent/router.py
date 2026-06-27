@@ -27,11 +27,10 @@ from app.features.agent.lg.stream_adapter import is_routing_relevant, pipe_langg
 from app.features.agent.lg.supervisor import make_supervisor
 from app.features.agent.state import stop_signals
 from app.shared.response_models import ConversationResponse, MessagesResponse, OkResponse
-from app.shared.schema import CamelResponse
 from app.auth import require_internal_secret
 from app.shared.db import get_supabase
 
-router = APIRouter(dependencies=[Depends(require_internal_secret)], default_response_class=CamelResponse)
+router = APIRouter(dependencies=[Depends(require_internal_secret)])
 
 
 # ---------------------------------------------------------------------------
@@ -215,7 +214,7 @@ async def agent_chat(body: AgentChatRequest):
                                 action = parsed.get("action")
                                 payload = parsed.get("payload", {})
                                 if action == "student_links":
-                                    accumulated_students = payload.get("studentLinks")
+                                    accumulated_students = payload.get("student_links")
                                 elif action == "download_schedule":
                                     accumulated_schedule_students = payload.get("students")
                                 elif action == "slots_ready":
@@ -279,11 +278,11 @@ async def agent_chat(body: AgentChatRequest):
 
 
 class StopRequest(BaseModel):
-    requestId: str | None = None
+    request_id: str | None = None
 
 
 @router.post("/stop", response_model=OkResponse)
 async def stop_agent(body: StopRequest):
-    if body.requestId:
-        stop_signals[body.requestId] = True
+    if body.request_id:
+        stop_signals[body.request_id] = True
     return {"ok": True}

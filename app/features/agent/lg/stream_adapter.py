@@ -184,7 +184,7 @@ async def pipe_langgraph_stream(
     if streamed_any_text:
         cleaned, students = extract_student_tokens(trailing)
         if students:
-            yield {"data": json.dumps({"type": "ui_action", "action": "student_links", "payload": {"studentLinks": students}})}
+            yield {"data": json.dumps({"type": "ui_action", "action": "student_links", "payload": {"student_links": students}})}
         if cleaned:
             yield {"data": json.dumps({"type": "chunk", "content": cleaned})}
     else:
@@ -192,7 +192,7 @@ async def pipe_langgraph_stream(
         fallback = last_supervisor_final_text or "Sorry, I could not generate a response. Please try again."
         cleaned, students = extract_student_tokens(fallback)
         if students:
-            yield {"data": json.dumps({"type": "ui_action", "action": "student_links", "payload": {"studentLinks": students}})}
+            yield {"data": json.dumps({"type": "ui_action", "action": "student_links", "payload": {"student_links": students}})}
         yield {"data": json.dumps({"type": "chunk", "content": cleaned or fallback})}
 
     # Call the on_complete callback (saves to DB) before done

@@ -1,27 +1,23 @@
 """Payment message generation endpoint."""
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel
 
 from app.auth import require_internal_secret
 from app.features.payment.service import PaymentStudentData, PaymentValidationError, build_payment_message
 from app.shared.db import get_supabase
 from app.shared.response_models import PaymentResponse
-from app.shared.schema import CamelResponse
 from app.types import ClassSlot
 
-router = APIRouter(dependencies=[Depends(require_internal_secret)], default_response_class=CamelResponse)
+router = APIRouter(dependencies=[Depends(require_internal_secret)])
 
 
 class GeneratePaymentRequest(BaseModel):
-    model_config = ConfigDict(populate_by_name=True)
-
-    # Accept camelCase keys from the TypeScript client
-    student_id: str = Field(alias="studentId")
+    student_id: str
     month: int
     year: int
-    template_type: int = Field(alias="templateType")
-    carryover: float = Field(default=0.0, alias="carryover")
+    template_type: int
+    carryover: float = 0.0
 
 
 @router.post("/generate", response_model=PaymentResponse)

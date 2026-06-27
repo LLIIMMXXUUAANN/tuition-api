@@ -5,10 +5,9 @@ from pydantic import BaseModel
 
 from app.auth import require_internal_secret
 from app.shared.db import get_supabase
-from app.shared.schema import CamelResponse
 from app.shared.response_models import OkResponse, TemplateItem
 
-router = APIRouter(dependencies=[Depends(require_internal_secret)], default_response_class=CamelResponse)
+router = APIRouter(dependencies=[Depends(require_internal_secret)])
 
 
 class TemplateUpdatePayload(BaseModel):

@@ -94,5 +94,5 @@ async def generate_payment_message(supabase: AsyncClient, params: dict) -> dict:
         "message": result["message"],
         "month": resolved_month,
         "year": resolved_year,
-        "monthName": result["month_name"],
+        "month_name": result["month_name"],
     }
