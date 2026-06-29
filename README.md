@@ -14,7 +14,7 @@ FastAPI backend for the tuition management system. Handles Google Calendar/Drive
 | `claude/google.md` | Google OAuth, Calendar, Drive, cleanup, sync implementation |
 | `docs/agent-tools.md` | Full 18-tool reference (input / process / output for each tool) |
 
-All frontend documentation (features, UI, routing, components, decisions) is in the frontend repo — see `../Tuition/README.md` and `../Tuition/CLAUDE.md`.
+Frontend repo: https://github.com/LLIIMMXXUUAANN/lim-tuition — all frontend documentation (features, UI, routing, components, decisions) is in the frontend repo, see `README.md` and `CLAUDE.md`.
 
 ## Requirements
 
