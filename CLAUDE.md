@@ -10,7 +10,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 | File | Covers |
 |---|---|
-| `docs/decisions.md` | Non-obvious design decisions and the reasoning behind them |
+| `docs/decisions.md` | Non-obvious design decisions, Pydantic trust boundary patterns, and reasoning behind them |
 | `claude/agent.md` | Tool contract, system rules, SSE contract, LangGraph graph |
 | `claude/timetable.md` | Timetable routes, slot classification algorithm, prompt rules |
 | `claude/google.md` | Google OAuth, Calendar, Drive, cleanup, and bulk sync implementation |

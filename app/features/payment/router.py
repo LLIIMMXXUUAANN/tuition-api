@@ -21,6 +21,14 @@ class GeneratePaymentRequest(BaseModel):
     carryover: float = 0.0
 
 
+class _PaymentStudentRow(BaseModel):
+    name: str
+    contact_person: str | None = None
+    class_schedule: list[dict] = []
+    fee_per_hour: float
+    status: str
+
+
 @router.post("/generate", response_model=PaymentResponse)
 async def generate_payment(body: GeneratePaymentRequest, supabase: AsyncClient = Depends(get_supabase)):
     # Validate ranges (mirror TypeScript exactly)
@@ -50,17 +58,20 @@ async def generate_payment(body: GeneratePaymentRequest, supabase: AsyncClient =
     if not result.data:
         raise HTTPException(status_code=404, detail="Student not found")
 
-    student_data = result.data
-    if student_data["status"] != "Active":
+    try:
+        row = _PaymentStudentRow.model_validate(result.data)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    if row.status != "Active":
         raise HTTPException(status_code=400, detail="Student is not active")
 
-    # Build student object
-    schedule = [ClassSlot(**s) for s in (student_data.get("class_schedule") or [])]
+    schedule = [ClassSlot(**s) for s in row.class_schedule]
     student = PaymentStudentData(
-        name=student_data["name"],
-        contact_person=student_data.get("contact_person"),
+        name=row.name,
+        contact_person=row.contact_person,
         class_schedule=schedule,
-        fee_per_hour=float(student_data["fee_per_hour"]),
+        fee_per_hour=row.fee_per_hour,
     )
 
     try:

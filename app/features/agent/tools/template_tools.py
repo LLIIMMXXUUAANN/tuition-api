@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pydantic import BaseModel
 from supabase import AsyncClient
 
 from app.shared.errors import err_msg
@@ -43,6 +44,13 @@ async def get_template(supabase: AsyncClient, id: str) -> dict:
     }
 
 
+class _PaymentStudentRow(BaseModel):
+    name: str
+    contact_person: str | None = None
+    class_schedule: list[dict] = []
+    fee_per_hour: float
+
+
 async def generate_payment_message(supabase: AsyncClient, params: dict) -> dict:
     now_myt = get_myt_now()
 
@@ -72,13 +80,17 @@ async def generate_payment_message(supabase: AsyncClient, params: dict) -> dict:
     if not fetch_result.data:
         return {"error": "Student not found"}
 
-    student_data = fetch_result.data
-    schedule = [ClassSlot(**s) for s in (student_data.get("class_schedule") or [])]
+    try:
+        row = _PaymentStudentRow.model_validate(fetch_result.data)
+    except Exception as exc:
+        return {"error": err_msg(exc)}
+
+    schedule = [ClassSlot(**s) for s in row.class_schedule]
     student = PaymentStudentData(
-        name=student_data["name"],
-        contact_person=student_data.get("contact_person"),
+        name=row.name,
+        contact_person=row.contact_person,
         class_schedule=schedule,
-        fee_per_hour=student_data["fee_per_hour"],
+        fee_per_hour=row.fee_per_hour,
     )
 
     try:

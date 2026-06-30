@@ -216,6 +216,108 @@ Every HTTP endpoint wraps its DB/service calls in `try/except`. Domain exception
 
 ---
 
+## Pydantic validation — trust boundaries
+
+The rule: **use Pydantic at every trust boundary** — any point where data enters from outside your Python code. Inside a single module where data is constructed locally, Pydantic adds overhead without benefit.
+
+### The 5 trust boundaries
+
+**1. HTTP request bodies**
+
+Every `POST`/`PUT` route body is a Pydantic `BaseModel`. FastAPI validates before the handler runs and returns 422 if the data doesn't match — no manual `isinstance` checks needed.
+
+```python
+class UpdateBufferMinsRequest(BaseModel):
+    buffer_mins: int  # FastAPI rejects non-int with 422 before the function runs
+```
+
+**2. HTTP response models**
+
+Every non-streaming, non-redirect route has `response_model=`. Strips undeclared fields automatically (sensitive columns added to the DB never leak) and powers the OpenAPI schema at `/docs`.
+
+```python
+@router.get("/buffer-mins", response_model=BufferMinsResponse)
+async def get_buffer_mins(...):
+    return {"buffer_mins": 15}  # dict is fine; FastAPI validates it against the model
+```
+
+**3. DB row parsing for computation — the `_XxxRow` pattern**
+
+The key question: *am I just passing this row through, or am I computing on its fields?*
+
+- **Pass-through** (just returning the row unchanged) — no model needed; dict is fine.
+- **Computation** (arithmetic, string ops, field access that would crash on null) — validate through a private Pydantic model first.
+
+```python
+# ❌ without model — fee_per_hour could be None; TypeError at runtime
+for s in rows:
+    fee += sessions * s["fee_per_hour"]
+
+# ✅ with model — null caught at parse time with a clean error
+class _StudentFeeRow(BaseModel):
+    id: str
+    name: str
+    fee_per_hour: float        # Pydantic rejects null before any arithmetic
+    class_schedule: list[dict] = []
+
+active = [_StudentFeeRow.model_validate(r) for r in rows]
+for s in active:
+    fee += sessions * s.fee_per_hour  # guaranteed float
+```
+
+**Why `_` prefix?** Signals the model is private to this file — describes what one specific query returns, not part of the public API, not exported. Define it directly above the function that uses it. If you change the `SELECT` columns, you update the model in the same place.
+
+**Existing examples in this codebase:**
+- `_StudentFeeRow` in `student_tools.py` — guards `fee_per_hour` multiplication in `get_fee_summary`
+- `_PaymentStudentRow` in `template_tools.py` and `payment/router.py` — guards `fee_per_hour` and `class_schedule` access in `generate_payment_message`
+
+**When to share vs duplicate a private row model:**
+
+Two files using the same row shape → duplicate (4 lines each, feature packages should not import each other). Three or more files → move to `app/shared/db_rows.py` as a public model (no `_` prefix).
+
+| Situation | Use |
+|---|---|
+| SELECT all columns for a route response | Full `Student` model from `app/types.py` |
+| SELECT a few columns to compute something | Private `_XxxRow` model above the function |
+| SELECT columns just to pass through | No model — dict is fine |
+
+**4. LLM tool input schemas**
+
+In `tool_factories.py`, every `StructuredTool.from_function(...)` has `args_schema=` pointing to a Pydantic model. The model becomes the JSON schema sent to the LLM — validation and documentation in one. `Literal["add", "remove"]` becomes `{"enum": ["add", "remove"]}` in JSON schema, so the LLM cannot pass an invalid value.
+
+**5. Config / environment variables**
+
+`app/config.py` uses `pydantic-settings BaseSettings`. Missing env vars cause a startup crash with a clear message rather than failing silently on the first API call — fail-fast is always preferable to fail-late.
+
+### When NOT to use Pydantic
+
+```python
+# ❌ you created this data — no external source
+def build_response(student_id: str, name: str) -> dict:
+    return {"id": student_id, "name": name}
+
+# ❌ pure pass-through — no computation
+result = await supabase.from_("students").select("id, name").execute()
+return result.data
+
+# ❌ all fields known locally — no external input
+async def compute_something():
+    rules = "some text"
+    buffer = 15
+```
+
+### Three-layer validation hierarchy
+
+| Layer | Mechanism | When to apply |
+|---|---|---|
+| DB constraint | `NOT NULL`, `CHECK`, foreign keys | Always — prevents bad data from being stored |
+| Pydantic model | `model_validate(row)` at fetch time | When computing on the row; catches null/type mismatch before arithmetic |
+| Runtime guard | `if field is None: return error` | Only when the DB has no constraint (e.g. text column storing an int) |
+
+You don't need all three everywhere. If the DB says `NOT NULL`, Pydantic's `float` field is already a sufficient second layer — an explicit `if field is None` guard on top would be redundant.
+
+---
+
 ## Not implemented (future reference)
 
 **API gateway**
@@ -451,16 +553,11 @@ The lifespan context (see singleton note in `db.py`) becomes important here — 
 
 **`response_model` and schema-first type generation**
 
-FastAPI endpoints currently return raw Supabase data without a declared `response_model`. Adding `response_model` everywhere would mean maintaining a third type definition on top of `src/lib/types.ts` (frontend) and the Supabase schema — three places to update every time a column changes.
+All FastAPI routes now declare `response_model=` on their route decorator. This gives automatic response serialisation, field stripping (undeclared fields never leak to the client), and powers the auto-generated OpenAPI docs at `/docs`. The two carve-outs where `response_model=` is intentionally absent: `POST /agent/chat` (returns `EventSourceResponse` SSE stream) and `GET /google/auth-url` (returns `RedirectResponse`) — FastAPI cannot apply a `response_model` to these.
 
-Not used because:
-- **API is mostly a thin proxy.** Responses forward Supabase data largely unchanged — no transformation, no field stripping needed.
-- **Triple maintenance at one-person scale.** DB schema + TypeScript types + Pydantic response models = three files to keep in sync manually.
-- **One frontend, one developer.** TypeScript compilation catches shape mismatches on the frontend side — a second validation layer in FastAPI adds cost without proportional benefit.
+**When to add it fully to new routes:** always. Every non-streaming, non-redirect route should have `response_model=`. Without it, undeclared fields from the DB (including any sensitive column added in future) can leak through to the response, and the OpenAPI schema is incomplete.
 
-**The one place it matters now:** any endpoint using `select("*")` — it returns every DB column including anything sensitive added in future. A `response_model` would automatically strip undeclared fields even if a new sensitive column is added tomorrow. Worth adding selectively on student endpoints as a security safeguard.
-
-**When to add it fully:** multiple API consumers (second frontend, mobile app, third-party integration), multiple developers where the response shape needs to be a declared contract between teams, or any endpoint that touches sensitive fields.
+**When to skip it:** `StreamingResponse`, `EventSourceResponse`, `RedirectResponse`, `FileResponse` — FastAPI cannot validate the response shape of streaming or redirect responses. Document the expected payload shape in a comment or in `docs/` instead.
 
 **Current state — three places maintained manually:**
 
