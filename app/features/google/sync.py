@@ -3,7 +3,7 @@ import asyncio
 from google.oauth2.credentials import Credentials
 from supabase import AsyncClient
 
-from app.features.agent.tools.shared import err_msg
+from app.shared.errors import err_msg
 from app.features.google.calendar import (
     create_weekly_class_events,
     find_recurring_event_ids,

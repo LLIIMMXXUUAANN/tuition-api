@@ -5,7 +5,7 @@ from __future__ import annotations
 from pydantic import BaseModel
 from supabase import AsyncClient
 
-from app.features.agent.tools.shared import err_msg
+from app.shared.errors import err_msg
 from app.features.google.sync import sync_all_students
 from app.features.google.auth import get_oauth2_credentials, save_token_if_rotated
 from app.features.students.service import (

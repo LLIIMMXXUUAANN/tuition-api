@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from app.features.agent.tools.shared import SupabaseClient
+from supabase import AsyncClient as SupabaseClient
 
 
 async def create_conversation(supabase: SupabaseClient) -> str:

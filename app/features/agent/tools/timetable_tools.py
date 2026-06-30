@@ -6,7 +6,7 @@ import asyncio
 
 from supabase import AsyncClient
 
-from app.features.agent.tools.shared import err_msg
+from app.shared.errors import err_msg
 from app.features.timetable.service import (
     BookedSlot,
     TimetableValidationError,

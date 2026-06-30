@@ -31,5 +31,5 @@ All Google API calls go through `app/features/google/`. The OAuth flow uses Next
 - `sync_all_students` handles all missing-resource combinations. Only skips students with no `class_schedule`.
 - For each student: (1) search Calendar and merge found IDs with DB IDs — catches rogue events not tracked in the DB; (2) if event IDs exist → `update_weekly_class_events` (nuke-and-repave, recovers existing Meet link via `effective_meet_link`); if none → `create_weekly_class_events`; (3) save updated IDs + Meet link to DB only if changed; (4) if Drive folder missing → `create_student_drive_folder`; if folder exists → `update_student_meet_doc`.
 - `invalid_grant` errors surface as "Google auth expired — reconnect".
-- Error messages use `err_msg` from `app.features.agent.tools.shared` — no private reimplementation.
+- Error messages use `err_msg` from `app.shared.errors` — no private reimplementation.
 - All students processed in parallel via `asyncio.gather`.

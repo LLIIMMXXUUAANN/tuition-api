@@ -71,7 +71,6 @@ app/
       eval.py          → self_eval — post-mutation DB verification
       state.py         → stop_signals dict (keyed by request_id)
       tools/
-        shared.py        → err_msg helper, SupabaseClient type alias
         student_tools.py → 10 student + Google + portal tools
         template_tools.py → 3 template + payment-message tools
         timetable_tools.py → 5 timetable + slot-generation tools
@@ -90,6 +89,7 @@ app/
         stream_adapter.py → pipe_langgraph_stream, is_routing_relevant
   shared/
     db.py              → get_supabase (singleton), get_setting, get_active_students
+    errors.py          → err_msg helper (shared by all tool files and google/sync)
     utils.py           → DAYS, TIME_SLOTS, time_to_mins, format_fee, get_weekday_dates, get_myt_now…
     schema.py          → CamelResponse shared response class
     gemini/

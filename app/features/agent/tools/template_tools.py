@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from supabase import AsyncClient
 
-from app.features.agent.tools.shared import err_msg
+from app.shared.errors import err_msg
 from app.features.payment.service import PaymentStudentData, PaymentValidationError, build_payment_message
 from app.features.templates.service import TEMPLATE_META, template_meta
 from app.shared.utils import get_myt_now

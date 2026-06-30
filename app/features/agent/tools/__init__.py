@@ -1,4 +1,4 @@
-from app.features.agent.tools.shared import SupabaseClient, err_msg
+from app.shared.errors import err_msg
 from app.features.agent.tools.student_tools import (
     ALLOWED_UPDATE_KEYS,
     search_students,
@@ -22,7 +22,7 @@ from app.features.agent.tools.timetable_tools import (
 )
 
 __all__ = [
-    "SupabaseClient", "err_msg",
+    "err_msg",
     "ALLOWED_UPDATE_KEYS",
     "search_students", "get_student", "manage_portal_access",
     "list_students", "create_student", "update_student", "delete_student",
