@@ -7,7 +7,7 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import JSONResponse
 from langchain_core.messages import (
     HumanMessage as LCHumanMessage,
@@ -37,18 +37,27 @@ router = APIRouter(dependencies=[Depends(require_internal_secret)], tags=["agent
 
 @router.get("/conversations/current", response_model=ConversationResponse)
 async def get_current_conversation(supabase: AsyncClient = Depends(get_supabase)):
-    return await persistence.get_or_create_conversation(supabase)
+    try:
+        return await persistence.get_or_create_conversation(supabase)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 @router.get("/conversations/{conversation_id}/messages", response_model=MessagesResponse)
 async def get_conversation_messages(conversation_id: str, supabase: AsyncClient = Depends(get_supabase)):
-    msgs = await persistence.get_messages(supabase, conversation_id)
+    try:
+        msgs = await persistence.get_messages(supabase, conversation_id)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
     return {"messages": msgs}
 
 
 @router.post("/conversations/{conversation_id}/clear", response_model=OkResponse)
 async def clear_conversation(conversation_id: str, supabase: AsyncClient = Depends(get_supabase)):
-    await persistence.clear_conversation(supabase, conversation_id)
+    try:
+        await persistence.clear_conversation(supabase, conversation_id)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
     return {"ok": True}
 
 

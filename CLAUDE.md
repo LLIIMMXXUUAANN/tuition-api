@@ -145,10 +145,10 @@ SECURITY DEFINER functions (called from the frontend, not the backend):
 Each feature has a `service.py` that owns domain logic and raises typed exceptions:
 
 - **Domain exceptions** (e.g. `StudentNotFoundError`, `TimetableValidationError`) are raised by the service.
-- **HTTP routers** catch domain exceptions → re-raise as `HTTPException` with the appropriate status code.
-- **Agent tools** catch domain exceptions → return `{"error": str(err)}` (non-fatal; the LLM sees the error and can respond accordingly).
+- **HTTP routers** wrap every DB/service call in `try/except`: domain exceptions → `HTTPException` with the appropriate status code (404, 400); general `Exception` (e.g. Supabase `APIError`) → `HTTPException(500, detail=str(exc))`. No raw tracebacks ever reach the client.
+- **Agent tools** wrap every DB/service call in `try/except Exception as exc: return {"error": err_msg(exc)}` (non-fatal; the LLM sees the error and can respond accordingly).
 
-This keeps HTTP semantics out of the service layer and error handling out of tool implementations.
+The service layer itself never catches — it raises and lets the caller decide the error shape. This keeps HTTP semantics out of the service layer and LLM error formatting out of tool implementations.
 
 ### Agent system
 

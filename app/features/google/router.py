@@ -98,10 +98,13 @@ async def google_callback(
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    await supabase.from_("settings").upsert(
-        {"key": "google_refresh_token", "value": refresh_token},
-        on_conflict="key",
-    ).execute()
+    try:
+        await supabase.from_("settings").upsert(
+            {"key": "google_refresh_token", "value": refresh_token},
+            on_conflict="key",
+        ).execute()
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
     return {"ok": True, "message": "Google connected successfully. You can close this tab."}
 

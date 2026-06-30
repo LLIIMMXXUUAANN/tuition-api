@@ -204,6 +204,16 @@ Two different error shapes are used intentionally, because they have different c
 
 The LLM is not an HTTP client — it does not understand status codes or `{"detail": ...}`. Returning `{"error": "Student not found"}` is the de facto convention for LLM tool results recommended by OpenAI, Anthropic, and LangChain in their agent/function-calling docs. Standardising both to one shape would mean forcing either the frontend or the LLM to parse a format not meant for it.
 
+**HTTP status code convention in this project:**
+
+| Status | Meaning | When raised |
+|---|---|---|
+| 400 | Bad Request | Client sent invalid data (e.g. `TimetableValidationError`, out-of-range values) |
+| 404 | Not Found | Resource does not exist (`StudentNotFoundError`, empty `.maybe_single()` result) |
+| 500 | Internal Server Error | Unexpected DB or service failure (`APIError` from Supabase, uncaught `Exception`) |
+
+Every HTTP endpoint wraps its DB/service calls in `try/except`. Domain exceptions map to 400/404; all other exceptions map to 500. No raw tracebacks ever reach the client — FastAPI's default unhandled exception response is a 500 with a full Python traceback, which leaks implementation detail and is never appropriate in production.
+
 ---
 
 ## Not implemented (future reference)

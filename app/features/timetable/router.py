@@ -51,13 +51,19 @@ class GenerateSlotsRequest(BaseModel):
 
 @router.get("/rules", response_model=RulesResponse)
 async def get_rules(supabase: AsyncClient = Depends(get_supabase)):
-    value = await get_setting(supabase, "timetable_rules") or ""
+    try:
+        value = await get_setting(supabase, "timetable_rules") or ""
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
     return {"rules": value}
 
 
 @router.post("/rules", response_model=OkResponse)
 async def update_rules(body: UpdateRulesRequest, supabase: AsyncClient = Depends(get_supabase)):
-    await save_rules(supabase, body.rules)
+    try:
+        await save_rules(supabase, body.rules)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
     return {"ok": True}
 
 
@@ -68,7 +74,10 @@ async def update_rules(body: UpdateRulesRequest, supabase: AsyncClient = Depends
 
 @router.get("/buffer-mins", response_model=BufferMinsResponse)
 async def get_buffer_mins(supabase: AsyncClient = Depends(get_supabase)):
-    raw = await get_setting(supabase, "timetable_buffer_mins")
+    try:
+        raw = await get_setting(supabase, "timetable_buffer_mins")
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
     buffer_mins: int = int(raw) if raw is not None else 15
     return {"buffer_mins": buffer_mins}
 
@@ -79,6 +88,8 @@ async def update_buffer_mins(body: UpdateBufferMinsRequest, supabase: AsyncClien
         await save_buffer_mins(supabase, body.buffer_mins)
     except TimetableValidationError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
     return {"ok": True}
 
 

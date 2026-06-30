@@ -71,20 +71,26 @@ async def list_students(status: str | None = None, supabase: AsyncClient = Depen
     query = supabase.from_("students").select("*").order("name")
     if status:
         query = query.eq("status", status)
-    result = await query.execute()
+    try:
+        result = await query.execute()
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
     return result.data or []
 
 
 @router.get("/portal-lookup", response_model=StudentResponse)
 async def portal_lookup(email: str, supabase: AsyncClient = Depends(get_supabase)):
-    result = (
-        await supabase.from_("students")
-        .select("*")
-        .contains("access_emails", [email])
-        .limit(1)
-        .maybe_single()
-        .execute()
-    )
+    try:
+        result = (
+            await supabase.from_("students")
+            .select("*")
+            .contains("access_emails", [email])
+            .limit(1)
+            .maybe_single()
+            .execute()
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
     if not result.data:
         raise HTTPException(status_code=404, detail="Student not found")
     return result.data
@@ -92,13 +98,16 @@ async def portal_lookup(email: str, supabase: AsyncClient = Depends(get_supabase
 
 @router.get("/{student_id}", response_model=StudentResponse)
 async def get_student(student_id: str, supabase: AsyncClient = Depends(get_supabase)):
-    result = (
-        await supabase.from_("students")
-        .select("*")
-        .eq("id", student_id)
-        .maybe_single()
-        .execute()
-    )
+    try:
+        result = (
+            await supabase.from_("students")
+            .select("*")
+            .eq("id", student_id)
+            .maybe_single()
+            .execute()
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
     if not result.data:
         raise HTTPException(status_code=404, detail="Student not found")
     return result.data

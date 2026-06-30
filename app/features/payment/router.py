@@ -36,18 +36,21 @@ async def generate_payment(body: GeneratePaymentRequest, supabase: AsyncClient =
         )
 
     # Fetch student from Supabase
-    result = (
-        await supabase.from_("students")
-        .select("name, contact_person, class_schedule, fee_per_hour, status")
-        .eq("id", body.student_id)
-        .maybe_single()
-        .execute()
-    )
+    try:
+        result = (
+            await supabase.from_("students")
+            .select("name, contact_person, class_schedule, fee_per_hour, status")
+            .eq("id", body.student_id)
+            .maybe_single()
+            .execute()
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
-    student_data = result.data if result is not None else None
-    if not student_data:
+    if not result.data:
         raise HTTPException(status_code=404, detail="Student not found")
 
+    student_data = result.data
     if student_data["status"] != "Active":
         raise HTTPException(status_code=400, detail="Student is not active")
 
