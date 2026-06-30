@@ -30,7 +30,7 @@ from app.shared.response_models import ConversationResponse, MessagesResponse, O
 from app.auth import require_internal_secret
 from app.shared.db import get_supabase
 
-router = APIRouter(dependencies=[Depends(require_internal_secret)])
+router = APIRouter(dependencies=[Depends(require_internal_secret)], tags=["agent"])
 
 
 # ---------------------------------------------------------------------------

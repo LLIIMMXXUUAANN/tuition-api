@@ -20,7 +20,7 @@ from app.shared.response_models import (
 )
 from app.types import ClassSlot
 
-router = APIRouter(dependencies=[Depends(require_internal_secret)])
+router = APIRouter(dependencies=[Depends(require_internal_secret)], tags=["timetable"])
 
 
 # ---------------------------------------------------------------------------

@@ -20,7 +20,7 @@ from app.features.students.service import (
     delete_student as svc_delete,
 )
 
-router = APIRouter(dependencies=[Depends(require_internal_secret)])
+router = APIRouter(dependencies=[Depends(require_internal_secret)], tags=["students"])
 
 
 # ---------------------------------------------------------------------------

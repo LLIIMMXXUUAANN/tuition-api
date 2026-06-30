@@ -9,7 +9,7 @@ from app.shared.db import get_supabase
 from app.shared.response_models import PaymentResponse
 from app.types import ClassSlot
 
-router = APIRouter(dependencies=[Depends(require_internal_secret)])
+router = APIRouter(dependencies=[Depends(require_internal_secret)], tags=["payment"])
 
 
 class GeneratePaymentRequest(BaseModel):

@@ -36,7 +36,7 @@ from app.features.google.sync import sync_all_students
 from app.shared.db import get_supabase
 from app.types import ClassSlot
 
-router = APIRouter(dependencies=[Depends(require_internal_secret)])
+router = APIRouter(dependencies=[Depends(require_internal_secret)], tags=["google"])
 
 
 # ---------------------------------------------------------------------------

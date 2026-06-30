@@ -176,6 +176,8 @@ This is the standard Python/FastAPI convention. The frontend owns all camelCase 
 | `X-Internal-Secret` shared secret | OAuth2 client credentials or mTLS | Rotating, auditable machine identity — needed when a second caller is added |
 | snake_case-only request bodies | No change needed — backend is already pure snake_case | The frontend owns conversion (`decamelizeKeys` before send, `camelizeKeys` after receive); this is the correct split for a Python backend + TypeScript frontend |
 
+**OpenAPI docs (`/docs`):** FastAPI auto-generates Swagger UI at `/docs` from route definitions and Pydantic models. Every `BaseModel` used as a request body or `response_model=` on a route decorator is listed in the Schemas section. Routes are grouped by `tags=` on each `APIRouter` — currently: `students`, `google`, `payment`, `templates`, `timetable`, `agent`. Health endpoints on the main app have no tag and appear under "default".
+
 ---
 
 ## Not implemented (future reference)
