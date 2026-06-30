@@ -1,8 +1,12 @@
+import logging
 import secrets
 import time
 import urllib.parse
 
 import httpx
+
+logger = logging.getLogger(__name__)
+
 from google.auth.transport.requests import AuthorizedSession
 from google.oauth2.credentials import Credentials
 
@@ -103,4 +107,4 @@ async def save_token_if_rotated(creds: Credentials, original_token: str, supabas
             on_conflict="key",
         ).execute()
     except Exception:
-        pass
+        logger.exception("Failed to persist rotated OAuth2 refresh token — next request may use stale token")

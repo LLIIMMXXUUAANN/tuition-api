@@ -3,6 +3,7 @@ import asyncio
 from google.oauth2.credentials import Credentials
 from supabase import AsyncClient
 
+from app.features.agent.tools.shared import err_msg
 from app.features.google.calendar import (
     create_weekly_class_events,
     find_recurring_event_ids,
@@ -11,10 +12,6 @@ from app.features.google.calendar import (
 from app.features.google.drive import create_student_drive_folder, update_student_meet_doc
 from app.features.google.errors import auth_expired
 from app.types import ClassSlot
-
-
-def _err_msg(exc: object, fallback: str) -> str:
-    return str(exc) if exc and str(exc) else fallback
 
 
 async def sync_all_students(supabase: AsyncClient, creds: Credentials) -> list[dict]:
@@ -53,7 +50,7 @@ async def sync_all_students(supabase: AsyncClient, creds: Credentials) -> list[d
         try:
             search_ids = await find_recurring_event_ids(creds, name)
         except Exception as exc:
-            raw = _err_msg(exc, "Calendar search failed")
+            raw = err_msg(exc, "Calendar search failed")
             if auth_expired(raw):
                 return {"name": name, "status": "error", "reason": "Google auth expired — reconnect"}
             # Non-fatal: fall back to DB IDs only
@@ -81,7 +78,7 @@ async def sync_all_students(supabase: AsyncClient, creds: Credentials) -> list[d
                 new_meet_link = cal_result["meet_link"]
                 effective_link = new_meet_link
         except Exception as exc:
-            raw = _err_msg(exc, "Calendar update failed")
+            raw = err_msg(exc, "Calendar update failed")
             return {
                 "name": name,
                 "status": "error",
@@ -108,7 +105,7 @@ async def sync_all_students(supabase: AsyncClient, creds: Credentials) -> list[d
                 ).eq("id", sid).execute()
                 drive_created = True
             except Exception as exc:
-                raw = _err_msg(exc, "Drive folder creation failed")
+                raw = err_msg(exc, "Drive folder creation failed")
                 drive_error = "Google auth expired — reconnect" if auth_expired(raw) else raw
         elif google_drive_link and effective_link:
             try:
@@ -116,7 +113,7 @@ async def sync_all_students(supabase: AsyncClient, creds: Credentials) -> list[d
                     creds, google_drive_link, name, slots, effective_link
                 )
             except Exception as exc:
-                raw = _err_msg(exc, "Drive doc update failed")
+                raw = err_msg(exc, "Drive doc update failed")
                 drive_error = "Google auth expired — reconnect" if auth_expired(raw) else raw
 
         # Build status notes

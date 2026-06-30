@@ -5,7 +5,7 @@ All Google API calls go through `app/features/google/`. The OAuth flow uses Next
 ### `auth.py` — OAuth credentials + CSRF
 
 - `get_oauth2_credentials(supabase)` reads the refresh token from the `settings` table and returns `(Credentials, original_token)`.
-- `save_token_if_rotated(creds, original_token, supabase)` detects and persists rotated refresh tokens (Google Auth updates `creds.refresh_token` in-place on rotation). Every endpoint that calls Google APIs must call this after the operation.
+- `save_token_if_rotated(creds, original_token, supabase)` detects and persists rotated refresh tokens (Google Auth updates `creds.refresh_token` in-place on rotation). Every endpoint that calls Google APIs must call this after the operation. The save is non-fatal — if the DB upsert fails, the failure is logged at ERROR level (`logger.exception`) and the current request still succeeds; the risk is the next request loading a now-invalid token from DB and failing with `invalid_grant`.
 - CSRF protection: `generate_state_token()` / `verify_and_consume_state(token)` use a module-level `_pending_states: dict[str, float]` with a 10-minute TTL. The state token is embedded in the OAuth redirect URL and verified before the code exchange.
 
 ### `calendar.py` — recurring class events
@@ -31,4 +31,5 @@ All Google API calls go through `app/features/google/`. The OAuth flow uses Next
 - `sync_all_students` handles all missing-resource combinations. Only skips students with no `class_schedule`.
 - For each student: (1) search Calendar and merge found IDs with DB IDs — catches rogue events not tracked in the DB; (2) if event IDs exist → `update_weekly_class_events` (nuke-and-repave, recovers existing Meet link via `effective_meet_link`); if none → `create_weekly_class_events`; (3) save updated IDs + Meet link to DB only if changed; (4) if Drive folder missing → `create_student_drive_folder`; if folder exists → `update_student_meet_doc`.
 - `invalid_grant` errors surface as "Google auth expired — reconnect".
+- Error messages use `err_msg` from `app.features.agent.tools.shared` — no private reimplementation.
 - All students processed in parallel via `asyncio.gather`.
