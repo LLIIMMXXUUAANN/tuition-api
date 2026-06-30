@@ -4,10 +4,6 @@ from dataclasses import dataclass
 from typing import Any
 
 from app.types import ClassSlot
-
-
-class PaymentValidationError(Exception):
-    pass
 from app.shared.utils import (
     MONTH_NAMES,
     format_fee,
@@ -17,6 +13,10 @@ from app.shared.utils import (
     oxford_list,
     time_to_mins,
 )
+
+
+class PaymentValidationError(Exception):
+    pass
 
 
 @dataclass(frozen=True)

@@ -1,7 +1,4 @@
-"""Agent SSE streaming endpoint — LangGraph multi-agent.
-
-Classic single-agent Gemini loop removed. LangGraph is the sole agent backend.
-"""
+"""Agent SSE streaming endpoint — LangGraph multi-agent."""
 
 from __future__ import annotations
 

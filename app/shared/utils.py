@@ -1,5 +1,7 @@
 """Shared utility helpers ported from src/lib/utils.ts."""
 
+import calendar
+import datetime
 from collections import defaultdict
 
 from app.types import ClassSlot, WeekDay
@@ -84,8 +86,6 @@ def get_weekday_dates(year: int, month: int, weekday: str) -> list[int]:
     Python's weekday(): Monday=0 … Sunday=6, so we convert:
       python_wd = (js_day_index - 1) % 7
     """
-    import calendar
-
     js_idx = DAY_INDEX[weekday]
     # Python calendar: Monday=0 … Sunday=6
     python_wd = (js_idx - 1) % 7
@@ -93,7 +93,6 @@ def get_weekday_dates(year: int, month: int, weekday: str) -> list[int]:
     dates = []
     _, days_in_month = calendar.monthrange(year, month)
     for day in range(1, days_in_month + 1):
-        import datetime
         if datetime.date(year, month, day).weekday() == python_wd:
             dates.append(day)
     return dates
