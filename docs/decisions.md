@@ -180,6 +180,17 @@ This is the standard Python/FastAPI convention. The frontend owns all camelCase 
 
 ---
 
+## Dual error shapes — HTTP vs tool errors
+
+Two different error shapes are used intentionally, because they have different consumers:
+
+- **FastAPI endpoint errors** — `{"detail": "..."}` via `HTTPException`. Consumed by the frontend (an HTTP client). This is the FastAPI/HTTP standard.
+- **Agent tool errors** — `{"error": "..."}` returned as a plain dict from tool functions. Consumed by the LLM, which reads the field and decides how to respond to the user.
+
+The LLM is not an HTTP client — it does not understand status codes or `{"detail": ...}`. Returning `{"error": "Student not found"}` is the de facto convention for LLM tool results recommended by OpenAI, Anthropic, and LangChain in their agent/function-calling docs. Standardising both to one shape would mean forcing either the frontend or the LLM to parse a format not meant for it.
+
+---
+
 ## Not implemented (future reference)
 
 **Prompt caching**
