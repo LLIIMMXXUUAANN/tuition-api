@@ -2,6 +2,7 @@
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
+from supabase import AsyncClient
 
 from app.auth import require_internal_secret
 from app.features.timetable.service import (
@@ -49,8 +50,7 @@ class GenerateSlotsRequest(BaseModel):
 
 
 @router.get("/rules", response_model=RulesResponse)
-async def get_rules():
-    supabase = await get_supabase()
+async def get_rules(supabase: AsyncClient = Depends(get_supabase)):
     result = (
         await supabase.from_("settings")
         .select("value")
@@ -63,8 +63,7 @@ async def get_rules():
 
 
 @router.post("/rules", response_model=OkResponse)
-async def update_rules(body: UpdateRulesRequest):
-    supabase = await get_supabase()
+async def update_rules(body: UpdateRulesRequest, supabase: AsyncClient = Depends(get_supabase)):
     await save_rules(supabase, body.rules)
     return {"ok": True}
 
@@ -75,8 +74,7 @@ async def update_rules(body: UpdateRulesRequest):
 
 
 @router.get("/buffer-mins", response_model=BufferMinsResponse)
-async def get_buffer_mins():
-    supabase = await get_supabase()
+async def get_buffer_mins(supabase: AsyncClient = Depends(get_supabase)):
     result = (
         await supabase.from_("settings")
         .select("value")
@@ -89,8 +87,7 @@ async def get_buffer_mins():
 
 
 @router.post("/buffer-mins", response_model=OkResponse)
-async def update_buffer_mins(body: UpdateBufferMinsRequest):
-    supabase = await get_supabase()
+async def update_buffer_mins(body: UpdateBufferMinsRequest, supabase: AsyncClient = Depends(get_supabase)):
     try:
         await save_buffer_mins(supabase, body.buffer_mins)
     except TimetableValidationError as exc:

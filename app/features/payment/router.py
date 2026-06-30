@@ -2,6 +2,7 @@
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
+from supabase import AsyncClient
 
 from app.auth import require_internal_secret
 from app.features.payment.service import PaymentStudentData, PaymentValidationError, build_payment_message
@@ -21,7 +22,7 @@ class GeneratePaymentRequest(BaseModel):
 
 
 @router.post("/generate", response_model=PaymentResponse)
-async def generate_payment(body: GeneratePaymentRequest):
+async def generate_payment(body: GeneratePaymentRequest, supabase: AsyncClient = Depends(get_supabase)):
     # Validate ranges (mirror TypeScript exactly)
     if body.month < 1 or body.month > 12 or body.year < 2020 or body.year > 2100:
         raise HTTPException(status_code=400, detail="month or year out of range")
@@ -35,7 +36,6 @@ async def generate_payment(body: GeneratePaymentRequest):
         )
 
     # Fetch student from Supabase
-    supabase = await get_supabase()
     result = (
         await supabase.from_("students")
         .select("name, contact_person, class_schedule, fee_per_hour, status")

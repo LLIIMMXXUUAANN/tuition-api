@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
+from supabase import AsyncClient
 
 from app.auth import require_internal_secret
 from app.shared.db import get_supabase
@@ -66,8 +67,7 @@ class StudentUpdatePayload(BaseModel):
 
 
 @router.get("", response_model=list[StudentResponse])
-async def list_students(status: str | None = None):
-    supabase = await get_supabase()
+async def list_students(status: str | None = None, supabase: AsyncClient = Depends(get_supabase)):
     query = supabase.from_("students").select("*").order("name")
     if status:
         query = query.eq("status", status)
@@ -76,8 +76,7 @@ async def list_students(status: str | None = None):
 
 
 @router.get("/portal-lookup", response_model=StudentResponse)
-async def portal_lookup(email: str):
-    supabase = await get_supabase()
+async def portal_lookup(email: str, supabase: AsyncClient = Depends(get_supabase)):
     result = (
         await supabase.from_("students")
         .select("*")
@@ -92,8 +91,7 @@ async def portal_lookup(email: str):
 
 
 @router.get("/{student_id}", response_model=StudentResponse)
-async def get_student(student_id: str):
-    supabase = await get_supabase()
+async def get_student(student_id: str, supabase: AsyncClient = Depends(get_supabase)):
     result = (
         await supabase.from_("students")
         .select("*")
@@ -107,8 +105,7 @@ async def get_student(student_id: str):
 
 
 @router.post("", status_code=201, response_model=CreateStudentResponse)
-async def create_student(body: StudentPayload):
-    supabase = await get_supabase()
+async def create_student(body: StudentPayload, supabase: AsyncClient = Depends(get_supabase)):
     try:
         result = await svc_create(supabase, body.model_dump())
     except Exception as exc:
@@ -117,8 +114,7 @@ async def create_student(body: StudentPayload):
 
 
 @router.put("/{student_id}", response_model=MutateStudentResponse)
-async def update_student(student_id: str, body: StudentUpdatePayload):
-    supabase = await get_supabase()
+async def update_student(student_id: str, body: StudentUpdatePayload, supabase: AsyncClient = Depends(get_supabase)):
     fields = body.model_dump(exclude_unset=True)
     if not fields:
         raise HTTPException(status_code=400, detail="No fields provided")
@@ -132,8 +128,7 @@ async def update_student(student_id: str, body: StudentUpdatePayload):
 
 
 @router.delete("/{student_id}", response_model=MutateStudentResponse)
-async def delete_student(student_id: str):
-    supabase = await get_supabase()
+async def delete_student(student_id: str, supabase: AsyncClient = Depends(get_supabase)):
     try:
         result = await svc_delete(supabase, student_id)
     except StudentNotFoundError:

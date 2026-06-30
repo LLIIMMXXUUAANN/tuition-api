@@ -21,6 +21,7 @@ from langchain_core.messages import (
 )
 from pydantic import BaseModel
 from sse_starlette.sse import EventSourceResponse
+from supabase import AsyncClient
 
 from app.features.agent import persistence
 from app.features.agent.lg.stream_adapter import is_routing_relevant, pipe_langgraph_stream
@@ -39,21 +40,18 @@ router = APIRouter(dependencies=[Depends(require_internal_secret)], tags=["agent
 
 
 @router.get("/conversations/current", response_model=ConversationResponse)
-async def get_current_conversation():
-    supabase = await get_supabase()
+async def get_current_conversation(supabase: AsyncClient = Depends(get_supabase)):
     return await persistence.get_or_create_conversation(supabase)
 
 
 @router.get("/conversations/{conversation_id}/messages", response_model=MessagesResponse)
-async def get_conversation_messages(conversation_id: str):
-    supabase = await get_supabase()
+async def get_conversation_messages(conversation_id: str, supabase: AsyncClient = Depends(get_supabase)):
     msgs = await persistence.get_messages(supabase, conversation_id)
     return {"messages": msgs}
 
 
 @router.post("/conversations/{conversation_id}/clear", response_model=OkResponse)
-async def clear_conversation(conversation_id: str):
-    supabase = await get_supabase()
+async def clear_conversation(conversation_id: str, supabase: AsyncClient = Depends(get_supabase)):
     await persistence.clear_conversation(supabase, conversation_id)
     return {"ok": True}
 
@@ -73,8 +71,7 @@ class AgentChatRequest(BaseModel):
 
 
 @router.post("/chat")
-async def agent_chat(body: AgentChatRequest):
-    supabase = await get_supabase()
+async def agent_chat(body: AgentChatRequest, supabase: AsyncClient = Depends(get_supabase)):
     request_id = body.request_id
 
     # MYT date string (cross-platform: no %-d)
@@ -142,7 +139,7 @@ async def agent_chat(body: AgentChatRequest):
         except Exception:
             pass  # non-fatal — falls back to INSERT in on_complete / finally
 
-    async def event_gen():
+    async def event_gen(sb: AsyncClient):
         accumulated_content: list[str] = []
         accumulated_steps: list[str] = []
         accumulated_students: list | None = None
@@ -166,7 +163,7 @@ async def agent_chat(body: AgentChatRequest):
             try:
                 if effective_id:
                     await persistence.update_agent_message(
-                        supabase, effective_id,
+                        sb, effective_id,
                         content="".join(accumulated_content),
                         steps=accumulated_steps,
                         students=accumulated_students,
@@ -175,7 +172,7 @@ async def agent_chat(body: AgentChatRequest):
                     )
                 else:
                     await persistence.insert_agent_message(
-                        supabase, body.conversation_id,
+                        sb, body.conversation_id,
                         content="".join(accumulated_content),
                         steps=accumulated_steps,
                         students=accumulated_students,
@@ -185,7 +182,7 @@ async def agent_chat(body: AgentChatRequest):
                 agent_msg_saved = True
                 if stored is not None:
                     await persistence.update_conversation_history(
-                        supabase, body.conversation_id,
+                        sb, body.conversation_id,
                         lg_contents=stored,
                         prev_lg_contents=lg_history_raw,
                     )
@@ -229,14 +226,14 @@ async def agent_chat(body: AgentChatRequest):
             try:
                 if effective_id:
                     await persistence.update_agent_message(
-                        supabase, effective_id,
+                        sb, effective_id,
                         content="".join(accumulated_content),
                         steps=accumulated_steps,
                         is_error=True,
                     )
                 else:
                     await persistence.insert_agent_message(
-                        supabase, body.conversation_id,
+                        sb, body.conversation_id,
                         content="".join(accumulated_content),
                         steps=accumulated_steps,
                         is_error=True,
@@ -252,14 +249,14 @@ async def agent_chat(body: AgentChatRequest):
                 try:
                     if effective_id:
                         await persistence.update_agent_message(
-                            supabase, effective_id,
+                            sb, effective_id,
                             content="".join(accumulated_content),
                             steps=accumulated_steps,
                             is_error=True,
                         )
                     else:
                         await persistence.insert_agent_message(
-                            supabase, body.conversation_id,
+                            sb, body.conversation_id,
                             content="".join(accumulated_content),
                             steps=accumulated_steps,
                             is_error=True,
@@ -269,7 +266,7 @@ async def agent_chat(body: AgentChatRequest):
                 if was_stopped:
                     yield {"data": json.dumps({"type": "stopped"})}
 
-    return EventSourceResponse(event_gen())
+    return EventSourceResponse(event_gen(supabase))
 
 
 # ---------------------------------------------------------------------------

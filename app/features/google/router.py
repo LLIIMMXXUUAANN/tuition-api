@@ -3,6 +3,7 @@ import asyncio
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
+from supabase import AsyncClient
 
 from app.auth import require_internal_secret
 from app.shared.response_models import (
@@ -98,7 +99,7 @@ async def google_auth_url():
 async def google_callback(
     code: str = Query(...),
     state: str = Query(...),
-    supabase=Depends(get_supabase),
+    supabase: AsyncClient = Depends(get_supabase),
 ):
     try:
         verify_and_consume_state(state)
@@ -118,8 +119,7 @@ async def google_callback(
 
 
 @router.post("/create-class-event", response_model=CreateClassEventResponse)
-async def create_class_event(body: CreateClassEventRequest):
-    supabase = await get_supabase()
+async def create_class_event(body: CreateClassEventRequest, supabase: AsyncClient = Depends(get_supabase)):
     try:
         creds, stored_token = await get_oauth2_credentials(supabase)
         result = await create_weekly_class_events(creds, body.name, body.class_schedule)
@@ -134,11 +134,10 @@ async def create_class_event(body: CreateClassEventRequest):
 
 
 @router.post("/create-student-folder", response_model=CreateStudentFolderResponse)
-async def create_student_folder(body: CreateStudentFolderRequest):
+async def create_student_folder(body: CreateStudentFolderRequest, supabase: AsyncClient = Depends(get_supabase)):
     resolved_mode = (
         "Other Syllabus" if body.mode == "Other Syllabus" else "My Python Syllabus"
     )
-    supabase = await get_supabase()
     try:
         creds, stored_token = await get_oauth2_credentials(supabase)
         folder_url = await create_student_drive_folder(
@@ -151,8 +150,7 @@ async def create_student_folder(body: CreateStudentFolderRequest):
 
 
 @router.post("/update-class-event", response_model=UpdateClassEventResponse)
-async def update_class_event(body: UpdateClassEventRequest):
-    supabase = await get_supabase()
+async def update_class_event(body: UpdateClassEventRequest, supabase: AsyncClient = Depends(get_supabase)):
     try:
         creds, stored_token = await get_oauth2_credentials(supabase)
     except Exception as exc:
@@ -212,7 +210,7 @@ async def update_class_event(body: UpdateClassEventRequest):
 
 
 @router.post("/delete-student", response_model=DeleteStudentGoogleResponse)
-async def delete_student_google_endpoint(body: DeleteStudentRequest):
+async def delete_student_google_endpoint(body: DeleteStudentRequest, supabase: AsyncClient = Depends(get_supabase)):
     drive_url = body.drive_folder_url
     event_ids = body.calendar_event_ids
 
@@ -222,7 +220,6 @@ async def delete_student_google_endpoint(body: DeleteStudentRequest):
     if not has_drive and not has_events:
         return {"drive_error": None, "calendar_error": None}
 
-    supabase = await get_supabase()
     try:
         creds, stored_token = await get_oauth2_credentials(supabase)
     except Exception as exc:
@@ -234,8 +231,7 @@ async def delete_student_google_endpoint(body: DeleteStudentRequest):
 
 
 @router.post("/sync-all", response_model=SyncAllResponse)
-async def sync_all():
-    supabase = await get_supabase()
+async def sync_all(supabase: AsyncClient = Depends(get_supabase)):
     try:
         creds, stored_token = await get_oauth2_credentials(supabase)
     except Exception as exc:

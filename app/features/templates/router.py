@@ -2,6 +2,7 @@
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
+from supabase import AsyncClient
 
 from app.auth import require_internal_secret
 from app.shared.db import get_supabase
@@ -15,15 +16,13 @@ class TemplateUpdatePayload(BaseModel):
 
 
 @router.get("", response_model=list[TemplateItem])
-async def list_templates():
-    supabase = await get_supabase()
+async def list_templates(supabase: AsyncClient = Depends(get_supabase)):
     result = await supabase.from_("templates").select("id, content").order("id").execute()
     return result.data or []
 
 
 @router.put("/{template_id}", response_model=OkResponse)
-async def update_template(template_id: str, body: TemplateUpdatePayload):
-    supabase = await get_supabase()
+async def update_template(template_id: str, body: TemplateUpdatePayload, supabase: AsyncClient = Depends(get_supabase)):
     result = (
         await supabase.from_("templates")
         .upsert({"id": template_id, "content": body.content}, on_conflict="id")

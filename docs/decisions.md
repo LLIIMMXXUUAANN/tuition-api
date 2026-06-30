@@ -130,6 +130,21 @@ All three options give rotating, auditable, machine-identity credentials. `X-Int
 
 ---
 
+**`Depends(get_supabase)` on every endpoint**
+
+All endpoints inject the Supabase client via FastAPI's dependency injection rather than calling `await get_supabase()` directly inside the function body:
+
+```python
+async def list_students(supabase: AsyncClient = Depends(get_supabase)):
+    ...
+```
+
+FastAPI calls `get_supabase()` automatically before the endpoint runs and passes the result in as a parameter. This is the industry-standard pattern — it makes dependencies explicit, enables FastAPI to handle lifecycle cleanup, and makes endpoints easier to test by swapping the dependency with a mock.
+
+**SSE generator (`event_gen`) in `agent/router.py`:** the inner generator receives `supabase` as an explicit parameter (`sb: AsyncClient`) rather than capturing it from the outer scope via closure. It is called as `EventSourceResponse(event_gen(supabase))`. This makes the generator's dependency explicit and testable in isolation, consistent with the same principle.
+
+---
+
 **User identity stops at Next.js — FastAPI has no per-user auth**
 
 The Supabase user JWT exists in the browser cookie and is verified by Next.js (`requireTutor()` calls `supabase.auth.getUser()` + the `is_tutor()` RPC). The JWT is never forwarded to FastAPI — FastAPI receives only `X-Internal-Secret` and has no visibility into which user made the request.
