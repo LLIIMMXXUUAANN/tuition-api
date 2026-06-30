@@ -208,6 +208,43 @@ The LLM is not an HTTP client — it does not understand status codes or `{"deta
 
 ## Not implemented (future reference)
 
+**API gateway**
+
+This project has no API gateway — the Next.js catch-all proxy (`src/app/api/[...path]/route.ts`) is a simple pass-through that injects `X-Internal-Secret` and forwards requests to FastAPI. This is sufficient for a single-admin internal tool.
+
+A production API gateway sits between clients and the backend and centralises cross-cutting concerns that every API needs:
+
+**Traffic management**
+- Rate limiting — blocks clients exceeding a request quota (e.g. 100 req/min) before they reach the backend
+- Load balancing — distributes traffic across multiple backend instances so no single server is overwhelmed
+- Caching — returns cached responses for repeated identical requests, reducing backend load
+
+**Security**
+- Authentication — verifies JWT tokens or API keys at the gateway; the backend never sees unauthenticated requests
+- SSL termination — handles HTTPS externally so the backend only deals with plain HTTP internally
+- IP whitelisting/blacklisting — blocks known bad actors at the network edge before requests consume backend resources
+
+**Routing**
+- Service routing — routes `/api/users` to one service and `/api/payments` to another; essential for microservices
+- Version routing — sends `/v1/` traffic to the old backend and `/v2/` to the new one during migrations
+- A/B testing — sends a percentage of traffic to a new version for gradual rollouts
+
+**Observability**
+- Centralised logging — every request logged in one place regardless of which backend instance handled it
+- Metrics — request counts, latency, and error rates across all services in one dashboard
+
+**Transformation**
+- Request/response transformation — modifies headers or reshapes payloads so backend services don't need to handle client quirks
+- Protocol translation — accepts REST externally and forwards as gRPC internally
+
+Without a gateway, every backend service implements all of this itself. With a gateway, it is implemented once and all services benefit automatically — the main reason microservices architectures almost always include one.
+
+**Industry trend — cloud-managed gateways:** self-hosted gateways (Kong, Nginx, Traefik) still exist but cloud-managed ones (AWS API Gateway, GCP API Gateway, Azure API Management) now dominate for startups and mid-size companies. Cloud gateways are zero-ops — the provider handles scaling, patching, and uptime. They bill per request so there is no idle server cost, and they include auth, rate limiting, logging, and monitoring out of the box. Only large companies with dedicated infrastructure teams (Google, Netflix) run their own at scale.
+
+**When to add one:** if FastAPI is ever exposed publicly, receives traffic from multiple clients, or becomes one service in a microservices architecture, add a cloud API gateway in front. For the current single-admin setup it is unnecessary overhead.
+
+---
+
 **Prompt caching**
 
 Gemini context caching can cache a static prefix (system prompt + tool schemas) at a reduced token rate (~4× cheaper for cached tokens). Not used because:
