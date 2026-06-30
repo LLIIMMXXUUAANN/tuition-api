@@ -86,13 +86,17 @@ async def create_student(supabase: AsyncClient, data: dict) -> dict:
             resolved_mode,
         )
         await save_token_if_rotated(creds, stored_token, supabase)
-        await supabase.from_("students").update({
+        google_links = {
             "google_meet_link": meet_link or None,
             "google_drive_link": drive_url,
             "calendar_event_ids": event_ids,
-        }).eq("id", student_id).execute()
+        }
     except Exception as exc:
         google_warning = friendly_google_error(str(exc))
+        google_links = None
+
+    if google_links:
+        await supabase.from_("students").update(google_links).eq("id", student_id).execute()
 
     return {"id": student_id, "name": student_name, "google_warning": google_warning}
 
@@ -163,7 +167,7 @@ async def update_student(supabase: AsyncClient, student_id: str, fields: dict) -
                     update_data["calendar_event_ids"] = []
                     update_data["google_meet_link"] = None
 
-                elif existing_ids and current_meet_link:
+                elif existing_ids:
                     # Branch 2: Update existing events (nuke-and-repave)
                     new_schedule = [ClassSlot(**s) for s in new_schedule_raw]
                     tasks = [find_recurring_event_ids(creds, student_name)]

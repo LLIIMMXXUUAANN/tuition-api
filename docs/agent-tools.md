@@ -192,7 +192,10 @@ Create a new student record in the database.
 
 ### Process
 
-Single Supabase `insert`. Returns `{ id, name }` on success.
+1. Supabase `insert` — creates the student row; raises on DB failure
+2. Google setup (non-fatal, in a separate try/except): creates Calendar events if `class_schedule` is provided, then creates Drive folder via `create_student_drive_folder`
+3. If Google setup succeeded: saves `google_meet_link`, `google_drive_link`, and `calendar_event_ids` to the student row in a separate DB update **outside** the Google try/except — a DB failure here raises rather than being swallowed as `google_warning`
+4. If Google setup failed: student row is kept with no links; `google_warning` is returned
 
 ### Output
 
@@ -233,7 +236,11 @@ Fields not in this allowlist are silently stripped (prevents prompt injection).
 1. Strips disallowed keys from `fields`
 2. Normalises `access_emails` entries to lowercase+trimmed if present
 3. Runs Supabase `update`
-4. If `class_schedule` was updated **and** the student has `calendar_event_ids` + `google_meet_link`: calls `update_weekly_class_events` (nuke-and-repave) and `update_student_meet_doc` in parallel via `asyncio.gather`; if a new Meet link is generated (primary was deleted), also saves it to DB and re-updates the Drive doc; Google failures are non-fatal and returned as `google_warning`
+4. If `class_schedule` was updated and changed, three branches:
+   - **Branch 1** (new schedule is empty): deletes all existing Calendar events, blanks Drive doc, clears `calendar_event_ids` and `google_meet_link` in DB
+   - **Branch 2** (`calendar_event_ids` exist): nuke-and-repave via `update_weekly_class_events` + `update_student_meet_doc` in parallel; recovers `effective_meet_link` directly from Google — does **not** require `google_meet_link` to be set in the DB (handles the case where the meet link was lost)
+   - **Branch 3** (no existing event IDs): creates fresh Calendar events via `create_weekly_class_events`, updates Drive doc if present
+   - Google failures are non-fatal in all branches and returned as `google_warning`
 
 ### Output
 
