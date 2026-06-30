@@ -3,7 +3,7 @@
 ### API routes (`router.py`)
 
 - `GET /timetable/rules` / `POST /timetable/rules` — read/write `timetable_rules` in the `settings` table (tutor-only)
-- `GET /timetable/buffer-mins` / `POST /timetable/buffer-mins` — read/write `timetable_buffer_mins`; POST validates 0–60 (tutor-only)
+- `GET /timetable/buffer-mins` / `POST /timetable/buffer-mins` — read/write `timetable_buffer_mins`; POST validates 0–60; GET guards `int()` conversion with `try/except (ValueError, TypeError)` and raises HTTP 500 with a clear message if the stored value is non-numeric (tutor-only)
 - `POST /timetable/generate-slots` — receives `{ rules, studentAvailability?, bookedSlots, bufferMins }`; runs the full slot classification pipeline and returns `{ slots: ClassifiedSlot[] }` (tutor-only)
 
 ### Slot classification algorithm (`app/shared/gemini/slot_generation.py` + `timetable/service.py`)

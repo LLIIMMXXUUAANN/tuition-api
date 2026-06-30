@@ -65,7 +65,10 @@ async def generate_slot_availability(
     if not rules.strip():
         return {"error": "No timetable rules configured. Use update_timetable_rules first."}
 
-    buffer_mins: int = int(buffer_raw) if buffer_raw is not None else 15
+    try:
+        buffer_mins: int = int(buffer_raw) if buffer_raw is not None else 15
+    except (ValueError, TypeError):
+        buffer_mins = 15
 
     booked_slots: list[BookedSlot] = []
     for s in students:

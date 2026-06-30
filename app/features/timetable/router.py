@@ -78,7 +78,10 @@ async def get_buffer_mins(supabase: AsyncClient = Depends(get_supabase)):
         raw = await get_setting(supabase, "timetable_buffer_mins")
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
-    buffer_mins: int = int(raw) if raw is not None else 15
+    try:
+        buffer_mins: int = int(raw) if raw is not None else 15
+    except (ValueError, TypeError) as exc:
+        raise HTTPException(status_code=500, detail=f"Invalid buffer_mins in settings: {raw!r}") from exc
     return {"buffer_mins": buffer_mins}
 
 

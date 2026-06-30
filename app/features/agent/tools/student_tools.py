@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pydantic import BaseModel
 from supabase import AsyncClient
 
 from app.features.agent.tools.shared import err_msg
@@ -197,6 +198,13 @@ async def get_schedule(supabase: AsyncClient, day: str) -> dict:
     return {"day": day, "students": students}
 
 
+class _StudentFeeRow(BaseModel):
+    id: str
+    name: str
+    fee_per_hour: float  # NOT NULL in DB; Pydantic rejects null before computation
+    class_schedule: list[dict] = []
+
+
 async def get_fee_summary(
     supabase: AsyncClient,
     month: int | None = None,
@@ -207,7 +215,8 @@ async def get_fee_summary(
     resolved_year = year if year is not None else now_myt.year
 
     try:
-        active = await get_active_students(supabase, "id, name, fee_per_hour, class_schedule")
+        rows = await get_active_students(supabase, "id, name, fee_per_hour, class_schedule")
+        active = [_StudentFeeRow.model_validate(r) for r in rows]
     except Exception as exc:
         return {"error": err_msg(exc)}
 
@@ -215,8 +224,7 @@ async def get_fee_summary(
     students_out: list[dict] = []
 
     for s in active:
-        schedule = s.get("class_schedule") or []
-        slots = [ClassSlot(**slot) for slot in schedule]
+        slots = [ClassSlot(**slot) for slot in s.class_schedule]
         slots_by_day = group_slots_by_day(slots)
         fee = 0.0
         for day, day_slots in slots_by_day.items():
@@ -225,11 +233,11 @@ async def get_fee_summary(
                 (time_to_mins(slot.end) - time_to_mins(slot.start)) / 60
                 for slot in day_slots
             )
-            fee += len(dates) * hours_per_session * s["fee_per_hour"]
+            fee += len(dates) * hours_per_session * s.fee_per_hour
         raw_fees.append(fee)
         students_out.append({
-            "id": s["id"],
-            "name": s["name"],
+            "id": s.id,
+            "name": s.name,
             "fee": round(fee * 100) / 100,
         })
 

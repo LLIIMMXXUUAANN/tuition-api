@@ -12,8 +12,8 @@ Fine-grained reads, coarse-grained writes. Read tools (`search_students`, `get_s
 | `get_student` | `id` | — | `{ student: <all fields> }` |
 | `list_students` | — | `status` | `{ students: [{ id, name, status, mode, fee_per_hour, class_schedule }] }` |
 | `create_student` | `name`, `mode`, `fee_per_hour` | all other fields | `{ id, name, google_warning?: string }` |
-| `update_student` | `id`, `fields` | — | `{ success: true, googleWarnings?: string[] }` |
-| `delete_student` | `id` | — | `{ success: true, warnings?: string[] }` |
+| `update_student` | `id`, `fields` | — | `{ success: true, google_warning?: string }` |
+| `delete_student` | `id` | — | `{ success: true, google_warning?: string }` |
 | `sync_all_students` | — | — | `{ results: [...] }` |
 | `manage_portal_access` | `student_id`, `action`, `email` | — | `{ result: string }` |
 | `get_schedule` | `day` (Monday–Sunday) | — | `{ day, students: [{ id, name, slots: [{ start, end }] }] }` |
@@ -31,14 +31,14 @@ Fine-grained reads, coarse-grained writes. Read tools (`search_students`, `get_s
 
 - **Exception handling pattern:** all tool functions wrap every Supabase and service call in `try/except Exception as exc: return {"error": err_msg(exc)}`. This is industry practice for LLM tool functions — the LLM receives a clean structured `{"error": "..."}` dict rather than a raw exception propagating through LangGraph's `ToolNode`. The service layer (e.g. `students/service.py`) is intentionally left without try/except — it raises, and the tool layer catches. `list_templates` is the only exception: it is a pure in-memory function with no I/O.
 - `ALLOWED_UPDATE_KEYS` set — allowlist of writable columns for `update_student`; prevents prompt injection from touching columns not in the set
-- `update_student` auto-syncs Calendar + Drive when `class_schedule` is in the updated fields: if `calendar_event_ids` + `google_meet_link` are set, calls `update_weekly_class_events` (nuke-and-repave) and `update_student_meet_doc` in parallel via `asyncio.gather`; if a new Meet link is generated (primary was deleted), also saves it to DB and re-updates the Drive doc; Google failures are non-fatal (returned as `googleWarnings`)
+- `update_student` auto-syncs Calendar + Drive when `class_schedule` is in the updated fields: if `calendar_event_ids` + `google_meet_link` are set, calls `update_weekly_class_events` (nuke-and-repave) and `update_student_meet_doc` in parallel via `asyncio.gather`; if a new Meet link is generated (primary was deleted), also saves it to DB and re-updates the Drive doc; Google failures are non-fatal (returned as `google_warning`)
 - `create_student` inserts the record and returns `{ id, name }`; includes `google_warning` if the service layer surfaces a non-fatal Google note
 - `delete_student` attempts Google cleanup (Drive trash + Calendar delete) before the DB delete; Google failure is non-fatal
 - `err_msg(err, fallback)` — use everywhere instead of inlining error strings (`app/features/agent/tools/shared.py`)
-- `get_fee_summary` uses `get_weekday_dates` (from `app/shared/utils.py`) for exact session counting; tracks raw fees in a parallel array to avoid per-student rounding accumulation before summing the total
+- `get_fee_summary` uses `get_weekday_dates` (from `app/shared/utils.py`) for exact session counting; tracks raw fees in a parallel array to avoid per-student rounding accumulation before summing the total; DB rows are validated through `_StudentFeeRow` (a private Pydantic model declared in the same file) before computation — catches null or type mismatches at the fetch boundary before any arithmetic runs
 - `list_templates` is a pure function — no DB call. All metadata (id, title, description) lives in the in-memory `TEMPLATE_META` from `app/features/templates/service.py`; only `get_template` hits the DB to fetch `content`
 - `generate_payment_message` defaults to next calendar month (MYT) when `month`/`year` are omitted; delegates all calculation to `build_payment_message()` from `app/features/payment/service.py`; returns `{ message, month, year, monthName }`
-- `get_timetable_settings` fetches `timetable_rules` and `timetable_buffer_mins` from `settings` in parallel; returns `{ rules, bufferMins }` (bufferMins defaults to 15 if unset)
+- `get_timetable_settings` fetches `timetable_rules` and `timetable_buffer_mins` from `settings` in parallel; returns `{ rules, bufferMins }` (bufferMins defaults to 15 if unset); `buffer_raw` is cast to `int` inside its own `try/except (ValueError, TypeError)` that falls back to 15 — the settings table stores this as text with no numeric DB constraint; `generate_slot_availability` applies the same guard independently
 - `update_timetable_rules` / `update_buffer_mins` upsert into `settings` table; `update_buffer_mins` validates 0–60 before writing
 - `generate_slot_availability` fetches rules, buffer, and all active students' `class_schedule` in a single `asyncio.gather`; delegates to `run_gemini_slot_generation` from `app/shared/gemini/slot_generation.py`; returns `{ error }` if no rules are configured
 - `download_timetable_image` fetches active students' `name` and `class_schedule` ordered by name; returns `{ students }` which the router emits as a `ui_action` SSE event
