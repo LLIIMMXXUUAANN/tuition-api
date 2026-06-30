@@ -14,20 +14,12 @@ from app.features.google.calendar import (
 )
 from app.features.google.cleanup import delete_student_google
 from app.features.google.drive import create_student_drive_folder, update_student_meet_doc
+from app.features.google.errors import friendly_google_error
 from app.types import ClassSlot
 
 
 class StudentNotFoundError(Exception):
     pass
-
-
-def _google_err(exc: Exception) -> str:
-    raw = str(exc)
-    if "invalid_grant" in raw:
-        return "Google auth expired. Visit /api/google/auth to reconnect."
-    if "insufficient" in raw.lower() or "403" in raw:
-        return "Google API not authorised. Visit /api/google/auth to re-connect."
-    return raw
 
 
 async def create_student(supabase: AsyncClient, data: dict) -> dict:
@@ -64,8 +56,6 @@ async def create_student(supabase: AsyncClient, data: dict) -> dict:
         .single()
         .execute()
     )
-    if hasattr(result, "error") and result.error:
-        raise Exception(result.error.message)
     if not result.data:
         raise Exception("Insert returned no data")
 
@@ -102,7 +92,7 @@ async def create_student(supabase: AsyncClient, data: dict) -> dict:
             "calendar_event_ids": event_ids,
         }).eq("id", student_id).execute()
     except Exception as exc:
-        google_warning = _google_err(exc)
+        google_warning = friendly_google_error(str(exc))
 
     return {"id": student_id, "name": student_name, "google_warning": google_warning}
 
@@ -155,13 +145,12 @@ async def update_student(supabase: AsyncClient, student_id: str, fields: dict) -
 
                 if not new_schedule_raw:
                     # Branch 1: Schedule cleared — delete events, blank Drive doc
-                    search_ids, drive_res = await asyncio.gather(
-                        find_recurring_event_ids(creds, student_name),
-                        update_student_meet_doc(
-                            creds, drive_url, student_name, [], current_meet_link
-                        ) if drive_url else asyncio.sleep(0),
-                        return_exceptions=True,
-                    )
+                    tasks = [find_recurring_event_ids(creds, student_name)]
+                    if drive_url:
+                        tasks.append(update_student_meet_doc(creds, drive_url, student_name, [], current_meet_link))
+                    _results = await asyncio.gather(*tasks, return_exceptions=True)
+                    search_ids = _results[0]
+                    drive_res = _results[1] if len(_results) > 1 else None
                     merged = list(dict.fromkeys(
                         existing_ids + (search_ids if not isinstance(search_ids, Exception) else [])
                     ))
@@ -177,13 +166,12 @@ async def update_student(supabase: AsyncClient, student_id: str, fields: dict) -
                 elif existing_ids and current_meet_link:
                     # Branch 2: Update existing events (nuke-and-repave)
                     new_schedule = [ClassSlot(**s) for s in new_schedule_raw]
-                    search_ids, drive_res = await asyncio.gather(
-                        find_recurring_event_ids(creds, student_name),
-                        update_student_meet_doc(
-                            creds, drive_url, student_name, new_schedule, current_meet_link
-                        ) if drive_url else asyncio.sleep(0),
-                        return_exceptions=True,
-                    )
+                    tasks = [find_recurring_event_ids(creds, student_name)]
+                    if drive_url:
+                        tasks.append(update_student_meet_doc(creds, drive_url, student_name, new_schedule, current_meet_link))
+                    _results = await asyncio.gather(*tasks, return_exceptions=True)
+                    search_ids = _results[0]
+                    drive_res = _results[1] if len(_results) > 1 else None
                     merged = list(dict.fromkeys(
                         existing_ids + (search_ids if not isinstance(search_ids, Exception) else [])
                     ))
@@ -225,7 +213,7 @@ async def update_student(supabase: AsyncClient, student_id: str, fields: dict) -
             except StudentNotFoundError:
                 raise
             except Exception as exc:
-                google_warning = _google_err(exc)
+                google_warning = friendly_google_error(str(exc))
 
     result = (
         await supabase.from_("students")
@@ -233,9 +221,6 @@ async def update_student(supabase: AsyncClient, student_id: str, fields: dict) -
         .eq("id", student_id)
         .execute()
     )
-    if hasattr(result, "error") and result.error:
-        raise Exception(result.error.message)
-
     return {"ok": True, "google_warning": google_warning}
 
 
@@ -274,7 +259,7 @@ async def delete_student(supabase: AsyncClient, student_id: str) -> dict:
             if errors:
                 google_warning = "; ".join(errors)
         except Exception as exc:
-            google_warning = f"Google cleanup skipped: {_google_err(exc)}"
+            google_warning = f"Google cleanup skipped: {friendly_google_error(str(exc))}"
 
     result = (
         await supabase.from_("students")
@@ -282,7 +267,4 @@ async def delete_student(supabase: AsyncClient, student_id: str) -> dict:
         .eq("id", student_id)
         .execute()
     )
-    if hasattr(result, "error") and result.error:
-        raise Exception(result.error.message)
-
     return {"ok": True, "google_warning": google_warning}

@@ -2,13 +2,12 @@
 
 from __future__ import annotations
 
-import datetime
-
-import pytz
 from supabase import AsyncClient
 
+from app.features.agent.tools.shared import err_msg
 from app.features.payment.service import PaymentStudentData, PaymentValidationError, build_payment_message
 from app.features.templates.service import TEMPLATE_META, template_meta
+from app.shared.utils import get_myt_now
 from app.types import ClassSlot
 
 
@@ -20,17 +19,18 @@ def list_templates() -> dict:
 
 
 async def get_template(supabase: AsyncClient, id: str) -> dict:
-    result = (
-        await supabase.from_("templates")
-        .select("id, content")
-        .eq("id", id)
-        .maybe_single()
-        .execute()
-    )
-    if result is None or not result.data:
+    try:
+        result = (
+            await supabase.from_("templates")
+            .select("id, content")
+            .eq("id", id)
+            .maybe_single()
+            .execute()
+        )
+    except Exception as exc:
+        return {"error": err_msg(exc)}
+    if not result.data:
         return {"error": f'Template "{id}" not found'}
-    if hasattr(result, "error") and result.error:
-        return {"error": result.error.message}
 
     meta = template_meta(result.data["id"])
     return {
@@ -44,8 +44,7 @@ async def get_template(supabase: AsyncClient, id: str) -> dict:
 
 
 async def generate_payment_message(supabase: AsyncClient, params: dict) -> dict:
-    MYT = pytz.timezone("Asia/Kuala_Lumpur")
-    now_myt = datetime.datetime.now(tz=MYT)
+    now_myt = get_myt_now()
 
     # Default to next calendar month
     if now_myt.month == 12:
@@ -59,15 +58,18 @@ async def generate_payment_message(supabase: AsyncClient, params: dict) -> dict:
     carryover = params.get("carryover") or 0.0
 
     student_id = params["student_id"]
-    fetch_result = (
-        await supabase.from_("students")
-        .select("name, contact_person, class_schedule, fee_per_hour, status")
-        .eq("id", student_id)
-        .single()
-        .execute()
-    )
+    try:
+        fetch_result = (
+            await supabase.from_("students")
+            .select("name, contact_person, class_schedule, fee_per_hour, status")
+            .eq("id", student_id)
+            .single()
+            .execute()
+        )
+    except Exception as exc:
+        return {"error": err_msg(exc)}
 
-    if (hasattr(fetch_result, "error") and fetch_result.error) or not fetch_result.data:
+    if not fetch_result.data:
         return {"error": "Student not found"}
 
     student_data = fetch_result.data

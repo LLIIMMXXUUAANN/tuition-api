@@ -7,6 +7,7 @@ from google.auth.transport.requests import AuthorizedSession
 from google.oauth2.credentials import Credentials
 
 from app.config import settings
+from app.shared.db import get_setting
 
 def _session(creds: Credentials) -> AuthorizedSession:
     """Requests session that bypasses system proxy (avoids httplib2 SSL issues on Windows)."""
@@ -77,14 +78,7 @@ async def exchange_code_for_refresh_token(code: str) -> str:
 
 async def get_oauth2_credentials(supabase) -> tuple[Credentials, str]:
     """Returns (credentials, original_refresh_token) — caller should check for rotation after ops."""
-    result = (
-        await supabase.from_("settings")
-        .select("value")
-        .eq("key", "google_refresh_token")
-        .maybe_single()
-        .execute()
-    )
-    refresh_token = result.data["value"] if (result and result.data) else None
+    refresh_token = await get_setting(supabase, "google_refresh_token")
     if not refresh_token:
         raise RuntimeError("Google not connected. Visit /api/google/auth to connect.")
 

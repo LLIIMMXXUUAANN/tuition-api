@@ -12,7 +12,7 @@ from app.features.timetable.service import (
     save_buffer_mins,
     save_rules,
 )
-from app.shared.db import get_supabase
+from app.shared.db import get_setting, get_supabase
 from app.shared.response_models import (
     BufferMinsResponse,
     GenerateSlotsResponse,
@@ -51,14 +51,7 @@ class GenerateSlotsRequest(BaseModel):
 
 @router.get("/rules", response_model=RulesResponse)
 async def get_rules(supabase: AsyncClient = Depends(get_supabase)):
-    result = (
-        await supabase.from_("settings")
-        .select("value")
-        .eq("key", "timetable_rules")
-        .maybe_single()
-        .execute()
-    )
-    value: str = result.data["value"] if (result and result.data) else ""
+    value = await get_setting(supabase, "timetable_rules") or ""
     return {"rules": value}
 
 
@@ -75,14 +68,8 @@ async def update_rules(body: UpdateRulesRequest, supabase: AsyncClient = Depends
 
 @router.get("/buffer-mins", response_model=BufferMinsResponse)
 async def get_buffer_mins(supabase: AsyncClient = Depends(get_supabase)):
-    result = (
-        await supabase.from_("settings")
-        .select("value")
-        .eq("key", "timetable_buffer_mins")
-        .maybe_single()
-        .execute()
-    )
-    buffer_mins: int = int(result.data["value"]) if (result and result.data) else 15
+    raw = await get_setting(supabase, "timetable_buffer_mins")
+    buffer_mins: int = int(raw) if raw is not None else 15
     return {"buffer_mins": buffer_mins}
 
 

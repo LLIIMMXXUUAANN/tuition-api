@@ -52,6 +52,7 @@ app/
       drive.py         → Student Drive folders + Meet docs
       cleanup.py       → Bulk delete on student removal
       sync.py          → Full sync for all active students
+      errors.py        → friendly_google_error, auth_expired (shared error helpers)
     students/
       router.py        → Student CRUD + portal lookup routes
       service.py       → StudentNotFoundError, create_student, update_student, delete_student
@@ -88,8 +89,8 @@ app/
         post_hooks.py    → make_student_post_hook, make_timetable_post_hook
         stream_adapter.py → pipe_langgraph_stream, is_routing_relevant
   shared/
-    db.py              → Async Supabase singleton (get_supabase)
-    utils.py           → DAYS, TIME_SLOTS, time_to_mins, format_fee, get_weekday_dates…
+    db.py              → get_supabase (singleton), get_setting, get_active_students
+    utils.py           → DAYS, TIME_SLOTS, time_to_mins, format_fee, get_weekday_dates, get_myt_now…
     schema.py          → CamelResponse shared response class
     gemini/
       client.py        → Singleton google.genai.Client

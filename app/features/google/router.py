@@ -33,6 +33,7 @@ from app.features.google.drive import (
     create_student_drive_folder,
     update_student_meet_doc,
 )
+from app.features.google.errors import friendly_google_error
 from app.features.google.sync import sync_all_students
 from app.shared.db import get_supabase
 from app.types import ClassSlot
@@ -68,19 +69,6 @@ class UpdateClassEventRequest(BaseModel):
 class DeleteStudentRequest(BaseModel):
     drive_folder_url: str | None = None
     calendar_event_ids: list[str] | None = None
-
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-
-def _friendly_google_error(raw: str) -> str:
-    if "invalid_grant" in raw:
-        return "Google auth expired. Visit /api/google/auth to reconnect."
-    if "insufficient" in raw.lower() or "403" in raw:
-        return "Google API not authorised. Visit /api/google/auth to re-connect."
-    return raw
 
 
 # ---------------------------------------------------------------------------
@@ -130,7 +118,7 @@ async def create_class_event(body: CreateClassEventRequest, supabase: AsyncClien
             "event_ids": result["event_ids"],
         }
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=_friendly_google_error(str(exc))) from exc
+        raise HTTPException(status_code=500, detail=friendly_google_error(str(exc))) from exc
 
 
 @router.post("/create-student-folder", response_model=CreateStudentFolderResponse)
@@ -146,7 +134,7 @@ async def create_student_folder(body: CreateStudentFolderRequest, supabase: Asyn
         await save_token_if_rotated(creds, stored_token, supabase)
         return {"url": folder_url}
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=_friendly_google_error(str(exc))) from exc
+        raise HTTPException(status_code=500, detail=friendly_google_error(str(exc))) from exc
 
 
 @router.post("/update-class-event", response_model=UpdateClassEventResponse)
@@ -154,7 +142,7 @@ async def update_class_event(body: UpdateClassEventRequest, supabase: AsyncClien
     try:
         creds, stored_token = await get_oauth2_credentials(supabase)
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=_friendly_google_error(str(exc))) from exc
+        raise HTTPException(status_code=500, detail=friendly_google_error(str(exc))) from exc
 
     trimmed_name = body.name.strip()
     trimmed_meet_link = body.meet_link.strip()
@@ -162,15 +150,12 @@ async def update_class_event(body: UpdateClassEventRequest, supabase: AsyncClien
     trimmed_drive_url = body.drive_folder_url.strip() if body.drive_folder_url else None
 
     # Phase 1: find recurring IDs + update Drive doc in parallel
-    search_result, drive_result = await asyncio.gather(
-        find_recurring_event_ids(creds, trimmed_name),
-        update_student_meet_doc(
-            creds, trimmed_drive_url, trimmed_name, slots, trimmed_meet_link
-        )
-        if trimmed_drive_url
-        else asyncio.sleep(0),
-        return_exceptions=True,
-    )
+    tasks = [find_recurring_event_ids(creds, trimmed_name)]
+    if trimmed_drive_url:
+        tasks.append(update_student_meet_doc(creds, trimmed_drive_url, trimmed_name, slots, trimmed_meet_link))
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+    search_result = results[0]
+    drive_result = results[1] if len(results) > 1 else None
 
     search_ids: list[str] = search_result if not isinstance(search_result, Exception) else []
     merged_event_ids = list(dict.fromkeys(body.event_ids + search_ids))
@@ -182,7 +167,7 @@ async def update_class_event(body: UpdateClassEventRequest, supabase: AsyncClien
         )
     except Exception as exc:
         raw = str(exc)
-        raise HTTPException(status_code=500, detail=_friendly_google_error(raw)) from exc
+        raise HTTPException(status_code=500, detail=friendly_google_error(raw)) from exc
 
     drive_doc_error: str | None = None
     if isinstance(drive_result, Exception):

@@ -2,9 +2,6 @@
 
 from __future__ import annotations
 
-import datetime
-
-import pytz
 from supabase import AsyncClient
 
 from app.features.agent.tools.shared import err_msg
@@ -16,7 +13,8 @@ from app.features.students.service import (
     update_student as svc_update,
     delete_student as svc_delete,
 )
-from app.shared.utils import get_weekday_dates, group_slots_by_day, time_to_mins
+from app.shared.db import get_active_students
+from app.shared.utils import get_myt_now, get_weekday_dates, group_slots_by_day, time_to_mins
 from app.types import ClassSlot
 
 ALLOWED_UPDATE_KEYS: set[str] = {
@@ -28,34 +26,36 @@ ALLOWED_UPDATE_KEYS: set[str] = {
 
 
 async def search_students(supabase: AsyncClient, query: str) -> dict:
-    result = (
-        await supabase.from_("students")
-        .select("id, name, status, class_schedule")
-        .ilike("name", f"%{query}%")
-        .order("name")
-        .execute()
-    )
-    if hasattr(result, "error") and result.error:
-        return {"error": result.error.message}
-    return {"students": result.data or []}
+    try:
+        result = (
+            await supabase.from_("students")
+            .select("id, name, status, class_schedule")
+            .ilike("name", f"%{query}%")
+            .order("name")
+            .execute()
+        )
+        return {"students": result.data or []}
+    except Exception as exc:
+        return {"error": err_msg(exc)}
 
 
 async def get_student(supabase: AsyncClient, id: str) -> dict:
-    result = (
-        await supabase.from_("students")
-        .select(
-            "id, name, status, mode, fee_per_hour, payment_method, class_schedule, "
-            "contact_person, contact_phone, student_phone, today_homework, notes, "
-            "latest_payment, google_meet_link, google_drive_link, calendar_event_ids, access_emails"
+    try:
+        result = (
+            await supabase.from_("students")
+            .select(
+                "id, name, status, mode, fee_per_hour, payment_method, class_schedule, "
+                "contact_person, contact_phone, student_phone, today_homework, notes, "
+                "latest_payment, google_meet_link, google_drive_link, calendar_event_ids, access_emails"
+            )
+            .eq("id", id)
+            .maybe_single()
+            .execute()
         )
-        .eq("id", id)
-        .maybe_single()
-        .execute()
-    )
-    if result is None or not result.data:
+    except Exception as exc:
+        return {"error": err_msg(exc)}
+    if not result.data:
         return {"error": "Student not found"}
-    if hasattr(result, "error") and result.error:
-        return {"error": result.error.message}
     return {"student": result.data}
 
 
@@ -67,14 +67,17 @@ async def manage_portal_access(
 ) -> dict:
     normalised = email.strip().lower()
 
-    fetch_result = (
-        await supabase.from_("students")
-        .select("access_emails")
-        .eq("id", student_id)
-        .maybe_single()
-        .execute()
-    )
-    if fetch_result is None or (hasattr(fetch_result, "error") and fetch_result.error) or not fetch_result.data:
+    try:
+        fetch_result = (
+            await supabase.from_("students")
+            .select("access_emails")
+            .eq("id", student_id)
+            .maybe_single()
+            .execute()
+        )
+    except Exception as exc:
+        return {"error": err_msg(exc)}
+    if not fetch_result.data:
         return {"error": "Student not found"}
 
     current: list[str] = fetch_result.data.get("access_emails") or []
@@ -88,15 +91,10 @@ async def manage_portal_access(
             return {"result": f"{normalised} does not have access"}
         updated = [e for e in current if e != normalised]
 
-    update_result = (
-        await supabase.from_("students")
-        .update({"access_emails": updated})
-        .eq("id", student_id)
-        .execute()
-    )
-    if hasattr(update_result, "error") and update_result.error:
-        return {"error": update_result.error.message}
-
+    try:
+        await supabase.from_("students").update({"access_emails": updated}).eq("id", student_id).execute()
+    except Exception as exc:
+        return {"error": err_msg(exc)}
     if action == "add":
         return {"result": f"{normalised} can now log in to the student portal"}
     return {"result": f"{normalised} has been removed from portal access"}
@@ -116,9 +114,10 @@ async def list_students(supabase: AsyncClient, params: dict) -> dict:
     if status:
         query = query.eq("status", status)
 
-    result = await query.execute()
-    if hasattr(result, "error") and result.error:
-        return {"error": result.error.message}
+    try:
+        result = await query.execute()
+    except Exception as exc:
+        return {"error": err_msg(exc)}
     return {"students": result.data or []}
 
 
@@ -179,17 +178,13 @@ async def run_sync_all(supabase: AsyncClient) -> dict:
 
 
 async def get_schedule(supabase: AsyncClient, day: str) -> dict:
-    result = (
-        await supabase.from_("students")
-        .select("id, name, class_schedule")
-        .eq("status", "Active")
-        .execute()
-    )
-    if hasattr(result, "error") and result.error:
-        return {"error": result.error.message}
+    try:
+        active = await get_active_students(supabase, "id, name, class_schedule")
+    except Exception as exc:
+        return {"error": err_msg(exc)}
 
     students = []
-    for s in (result.data or []):
+    for s in active:
         schedule = s.get("class_schedule") or []
         slots = [
             {"start": slot["start"], "end": slot["end"]}
@@ -207,24 +202,19 @@ async def get_fee_summary(
     month: int | None = None,
     year: int | None = None,
 ) -> dict:
-    MYT = pytz.timezone("Asia/Kuala_Lumpur")
-    now_myt = datetime.datetime.now(tz=MYT)
+    now_myt = get_myt_now()
     resolved_month = month if month is not None else now_myt.month
     resolved_year = year if year is not None else now_myt.year
 
-    result = (
-        await supabase.from_("students")
-        .select("id, name, fee_per_hour, class_schedule")
-        .eq("status", "Active")
-        .execute()
-    )
-    if hasattr(result, "error") and result.error:
-        return {"error": result.error.message}
+    try:
+        active = await get_active_students(supabase, "id, name, fee_per_hour, class_schedule")
+    except Exception as exc:
+        return {"error": err_msg(exc)}
 
     raw_fees: list[float] = []
     students_out: list[dict] = []
 
-    for s in (result.data or []):
+    for s in active:
         schedule = s.get("class_schedule") or []
         slots = [ClassSlot(**slot) for slot in schedule]
         slots_by_day = group_slots_by_day(slots)

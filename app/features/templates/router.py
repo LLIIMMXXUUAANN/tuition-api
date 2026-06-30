@@ -17,17 +17,17 @@ class TemplateUpdatePayload(BaseModel):
 
 @router.get("", response_model=list[TemplateItem])
 async def list_templates(supabase: AsyncClient = Depends(get_supabase)):
-    result = await supabase.from_("templates").select("id, content").order("id").execute()
+    try:
+        result = await supabase.from_("templates").select("id, content").order("id").execute()
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
     return result.data or []
 
 
 @router.put("/{template_id}", response_model=OkResponse)
 async def update_template(template_id: str, body: TemplateUpdatePayload, supabase: AsyncClient = Depends(get_supabase)):
-    result = (
-        await supabase.from_("templates")
-        .upsert({"id": template_id, "content": body.content}, on_conflict="id")
-        .execute()
-    )
-    if hasattr(result, "error") and result.error:
-        raise HTTPException(status_code=400, detail=result.error.message)
+    try:
+        await supabase.from_("templates").upsert({"id": template_id, "content": body.content}, on_conflict="id").execute()
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
     return {"ok": True}

@@ -4,6 +4,8 @@ import calendar
 import datetime
 from collections import defaultdict
 
+import pytz
+
 from app.types import ClassSlot, WeekDay
 
 DAYS: list[str] = [d.value for d in WeekDay]
@@ -77,6 +79,10 @@ def group_slots_by_day(schedule: list[ClassSlot]) -> dict[str, list[ClassSlot]]:
     for slot in schedule:
         result[slot.day].append(slot)
     return dict(result)
+
+
+def get_myt_now() -> datetime.datetime:
+    return datetime.datetime.now(tz=pytz.timezone("Asia/Kuala_Lumpur"))
 
 
 def get_weekday_dates(year: int, month: int, weekday: str) -> list[int]:

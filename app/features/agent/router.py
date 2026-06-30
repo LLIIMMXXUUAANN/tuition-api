@@ -2,13 +2,11 @@
 
 from __future__ import annotations
 
-import datetime
 import json
 import logging
 
 logger = logging.getLogger(__name__)
 
-import pytz
 from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
 from langchain_core.messages import (
@@ -27,6 +25,7 @@ from app.features.agent.state import stop_signals
 from app.shared.response_models import ConversationResponse, MessagesResponse, OkResponse
 from app.auth import require_internal_secret
 from app.shared.db import get_supabase
+from app.shared.utils import get_myt_now
 
 router = APIRouter(dependencies=[Depends(require_internal_secret)], tags=["agent"])
 
@@ -67,13 +66,24 @@ class AgentChatRequest(BaseModel):
     new_content: str | None = None
 
 
+async def _persist_agent_message(
+    sb: AsyncClient,
+    effective_id: str | None,
+    conversation_id: str,
+    **kwargs,
+) -> None:
+    if effective_id:
+        await persistence.update_agent_message(sb, effective_id, **kwargs)
+    else:
+        await persistence.insert_agent_message(sb, conversation_id, **kwargs)
+
+
 @router.post("/chat")
 async def agent_chat(body: AgentChatRequest, supabase: AsyncClient = Depends(get_supabase)):
     request_id = body.request_id
 
     # MYT date string (cross-platform: no %-d)
-    MYT = pytz.timezone("Asia/Kuala_Lumpur")
-    now_myt = datetime.datetime.now(tz=MYT)
+    now_myt = get_myt_now()
     myt_date_str = now_myt.strftime("%A, %B ") + str(now_myt.day) + now_myt.strftime(", %Y")
 
     # --- Determine send path and load history ---
@@ -158,24 +168,14 @@ async def agent_chat(body: AgentChatRequest, supabase: AsyncClient = Depends(get
 
             effective_id = agent_msg_id_to_update or pre_agent_id
             try:
-                if effective_id:
-                    await persistence.update_agent_message(
-                        sb, effective_id,
-                        content="".join(accumulated_content),
-                        steps=accumulated_steps,
-                        students=accumulated_students,
-                        schedule_students=accumulated_schedule_students,
-                        slot_data=accumulated_slot_data,
-                    )
-                else:
-                    await persistence.insert_agent_message(
-                        sb, body.conversation_id,
-                        content="".join(accumulated_content),
-                        steps=accumulated_steps,
-                        students=accumulated_students,
-                        schedule_students=accumulated_schedule_students,
-                        slot_data=accumulated_slot_data,
-                    )
+                await _persist_agent_message(
+                    sb, effective_id, body.conversation_id,
+                    content="".join(accumulated_content),
+                    steps=accumulated_steps,
+                    students=accumulated_students,
+                    schedule_students=accumulated_schedule_students,
+                    slot_data=accumulated_slot_data,
+                )
                 agent_msg_saved = True
                 if stored is not None:
                     await persistence.update_conversation_history(
@@ -221,20 +221,12 @@ async def agent_chat(body: AgentChatRequest, supabase: AsyncClient = Depends(get
         except Exception as e:
             effective_id = agent_msg_id_to_update or pre_agent_id
             try:
-                if effective_id:
-                    await persistence.update_agent_message(
-                        sb, effective_id,
-                        content="".join(accumulated_content),
-                        steps=accumulated_steps,
-                        is_error=True,
-                    )
-                else:
-                    await persistence.insert_agent_message(
-                        sb, body.conversation_id,
-                        content="".join(accumulated_content),
-                        steps=accumulated_steps,
-                        is_error=True,
-                    )
+                await _persist_agent_message(
+                    sb, effective_id, body.conversation_id,
+                    content="".join(accumulated_content),
+                    steps=accumulated_steps,
+                    is_error=True,
+                )
                 agent_msg_saved = True
             except Exception:
                 pass
@@ -244,20 +236,12 @@ async def agent_chat(body: AgentChatRequest, supabase: AsyncClient = Depends(get
             if not completed_normally and not agent_msg_saved:
                 effective_id = agent_msg_id_to_update or pre_agent_id
                 try:
-                    if effective_id:
-                        await persistence.update_agent_message(
-                            sb, effective_id,
-                            content="".join(accumulated_content),
-                            steps=accumulated_steps,
-                            is_error=True,
-                        )
-                    else:
-                        await persistence.insert_agent_message(
-                            sb, body.conversation_id,
-                            content="".join(accumulated_content),
-                            steps=accumulated_steps,
-                            is_error=True,
-                        )
+                    await _persist_agent_message(
+                        sb, effective_id, body.conversation_id,
+                        content="".join(accumulated_content),
+                        steps=accumulated_steps,
+                        is_error=True,
+                    )
                 except Exception:
                     pass
                 if was_stopped:

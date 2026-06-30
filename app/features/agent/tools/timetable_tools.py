@@ -14,17 +14,17 @@ from app.features.timetable.service import (
     save_buffer_mins as svc_save_buffer_mins,
     save_rules as svc_save_rules,
 )
+from app.shared.db import get_active_students, get_setting
 
 
 async def get_timetable_settings(supabase: AsyncClient) -> dict:
     try:
-        rules_result, buffer_result = await asyncio.gather(
-            supabase.from_("settings").select("value").eq("key", "timetable_rules").maybe_single().execute(),
-            supabase.from_("settings").select("value").eq("key", "timetable_buffer_mins").maybe_single().execute(),
+        rules_raw, buffer_raw = await asyncio.gather(
+            get_setting(supabase, "timetable_rules", ""),
+            get_setting(supabase, "timetable_buffer_mins"),
         )
-        rules: str = ((rules_result.data if rules_result else None) or {}).get("value", "")
-        raw_buf = ((buffer_result.data if buffer_result else None) or {}).get("value")
-        buffer_mins: int = int(raw_buf) if raw_buf is not None else 15
+        rules: str = rules_raw or ""
+        buffer_mins: int = int(buffer_raw) if buffer_raw is not None else 15
         return {"rules": rules, "buffer_mins": buffer_mins}
     except Exception as err:
         return {"error": err_msg(err)}
@@ -53,23 +53,22 @@ async def generate_slot_availability(
     student_availability: str = "",
 ) -> dict:
     try:
-        rules_result, buffer_result, students_result = await asyncio.gather(
-            supabase.from_("settings").select("value").eq("key", "timetable_rules").maybe_single().execute(),
-            supabase.from_("settings").select("value").eq("key", "timetable_buffer_mins").maybe_single().execute(),
-            supabase.from_("students").select("class_schedule").eq("status", "Active").execute(),
+        rules_raw, buffer_raw, students = await asyncio.gather(
+            get_setting(supabase, "timetable_rules", ""),
+            get_setting(supabase, "timetable_buffer_mins"),
+            get_active_students(supabase, "class_schedule"),
         )
     except Exception as err:
         return {"error": err_msg(err, "Failed to fetch timetable settings")}
 
-    rules: str = (rules_result.data or {}).get("value", "")
+    rules: str = rules_raw or ""
     if not rules.strip():
         return {"error": "No timetable rules configured. Use update_timetable_rules first."}
 
-    raw_buf = (buffer_result.data or {}).get("value")
-    buffer_mins: int = int(raw_buf) if raw_buf is not None else 15
+    buffer_mins: int = int(buffer_raw) if buffer_raw is not None else 15
 
     booked_slots: list[BookedSlot] = []
-    for s in (students_result.data or []):
+    for s in students:
         for slot_data in (s.get("class_schedule") or []):
             booked_slots.append(BookedSlot(
                 day=slot_data["day"],
@@ -85,15 +84,16 @@ async def generate_slot_availability(
 
 
 async def download_timetable_image(supabase: AsyncClient) -> dict:
-    result = (
-        await supabase.from_("students")
-        .select("name, class_schedule")
-        .eq("status", "Active")
-        .order("name")
-        .execute()
-    )
-    if hasattr(result, "error") and result.error:
-        return {"error": result.error.message}
+    try:
+        result = (
+            await supabase.from_("students")
+            .select("name, class_schedule")
+            .eq("status", "Active")
+            .order("name")
+            .execute()
+        )
+    except Exception as err:
+        return {"error": err_msg(err)}
     return {
         "students": [
             {"name": s["name"], "class_schedule": s.get("class_schedule") or []}

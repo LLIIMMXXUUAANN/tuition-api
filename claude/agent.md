@@ -29,6 +29,7 @@ Fine-grained reads, coarse-grained writes. Read tools (`search_students`, `get_s
 
 ### Tool implementation notes (`app/features/agent/tools/`)
 
+- **Exception handling pattern:** all tool functions wrap every Supabase and service call in `try/except Exception as exc: return {"error": err_msg(exc)}`. This is industry practice for LLM tool functions — the LLM receives a clean structured `{"error": "..."}` dict rather than a raw exception propagating through LangGraph's `ToolNode`. The service layer (e.g. `students/service.py`) is intentionally left without try/except — it raises, and the tool layer catches. `list_templates` is the only exception: it is a pure in-memory function with no I/O.
 - `ALLOWED_UPDATE_KEYS` set — allowlist of writable columns for `update_student`; prevents prompt injection from touching columns not in the set
 - `update_student` auto-syncs Calendar + Drive when `class_schedule` is in the updated fields: if `calendar_event_ids` + `google_meet_link` are set, calls `update_weekly_class_events` (nuke-and-repave) and `update_student_meet_doc` in parallel via `asyncio.gather`; if a new Meet link is generated (primary was deleted), also saves it to DB and re-updates the Drive doc; Google failures are non-fatal (returned as `googleWarnings`)
 - `create_student` inserts the record and returns `{ id, name }`; includes `google_warning` if the service layer surfaces a non-fatal Google note
@@ -59,7 +60,7 @@ All conversation state lives in Supabase. Two tables (both RLS-protected via `is
 - `update_agent_message` / `insert_agent_message` — used by save paths; `update_agent_message` flips `is_error` to `False` on success.
 - `_row_to_message(row)` — maps DB columns to the JSON shape sent to the frontend: `isError`, `steps`, `students`, `scheduleStudents`, `slotData`, `timestamp`.
 
-**`effective_id` pattern:** all save paths use `effective_id = agent_msg_id_to_update or pre_agent_id` — cleanly unifies retry (existing row) and normal-send (pre-inserted row) without duplicating the update/insert branch logic.
+**`effective_id` pattern:** all save paths use `effective_id = agent_msg_id_to_update or pre_agent_id` — cleanly unifies retry (existing row) and normal-send (pre-inserted row) without duplicating the update/insert branch logic. The actual write is done via `_persist_agent_message(sb, effective_id, conversation_id, **kwargs)` — a helper in `router.py` that calls `update_agent_message` when `effective_id` is set and `insert_agent_message` otherwise, used in all three save paths (on_complete, except, finally).
 
 ---
 
