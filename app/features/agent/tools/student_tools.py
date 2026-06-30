@@ -146,7 +146,7 @@ async def update_student(supabase: AsyncClient, id: str, fields: dict) -> dict:
 
     response: dict = {"success": True}
     if result.get("google_warning"):
-        response["google_warnings"] = [result["google_warning"]]
+        response["google_warning"] = result["google_warning"]
     return response
 
 
@@ -160,7 +160,7 @@ async def delete_student(supabase: AsyncClient, id: str) -> dict:
 
     response: dict = {"success": True}
     if result.get("google_warning"):
-        response["warnings"] = [result["google_warning"]]
+        response["google_warning"] = result["google_warning"]
     return response
 
 

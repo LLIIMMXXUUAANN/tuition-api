@@ -233,7 +233,7 @@ Fields not in this allowlist are silently stripped (prevents prompt injection).
 1. Strips disallowed keys from `fields`
 2. Normalises `access_emails` entries to lowercase+trimmed if present
 3. Runs Supabase `update`
-4. If `class_schedule` was updated **and** the student has `calendar_event_ids` + `google_meet_link`: calls `update_weekly_class_events` (nuke-and-repave) and `update_student_meet_doc` in parallel via `asyncio.gather`; if a new Meet link is generated (primary was deleted), also saves it to DB and re-updates the Drive doc; Google failures are non-fatal and returned as `googleWarnings`
+4. If `class_schedule` was updated **and** the student has `calendar_event_ids` + `google_meet_link`: calls `update_weekly_class_events` (nuke-and-repave) and `update_student_meet_doc` in parallel via `asyncio.gather`; if a new Meet link is generated (primary was deleted), also saves it to DB and re-updates the Drive doc; Google failures are non-fatal and returned as `google_warning`
 
 ### Output
 
@@ -242,11 +242,11 @@ Fields not in this allowlist are silently stripped (prevents prompt injection).
 { "success": true }
 ```
 
-**Success with Google warnings**
+**Success with Google warning**
 ```json
 {
   "success": true,
-  "googleWarnings": ["Calendar update failed: ...", "Drive Meet doc update failed: ..."]
+  "google_warning": "Drive Meet doc update failed: ..."
 }
 ```
 
@@ -282,11 +282,11 @@ Permanently delete a student record and clean up Google resources.
 { "success": true }
 ```
 
-**Success with Google warnings**
+**Success with Google warning**
 ```json
 {
   "success": true,
-  "warnings": ["Drive cleanup warning: ...", "Calendar cleanup warning: ..."]
+  "google_warning": "Drive cleanup: ... ; Calendar cleanup: ..."
 }
 ```
 
