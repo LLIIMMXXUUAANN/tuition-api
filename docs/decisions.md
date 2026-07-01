@@ -353,6 +353,8 @@ Without a gateway, every backend service implements all of this itself. With a g
 
 **Industry trend — cloud-managed gateways:** self-hosted gateways (Kong, Nginx, Traefik) still exist but cloud-managed ones (AWS API Gateway, GCP API Gateway, Azure API Management) now dominate for startups and mid-size companies. Cloud gateways are zero-ops — the provider handles scaling, patching, and uptime. They bill per request so there is no idle server cost, and they include auth, rate limiting, logging, and monitoring out of the box. Only large companies with dedicated infrastructure teams (Google, Netflix) run their own at scale.
 
+**Enterprise tier — Apigee:** Google's full API management platform (Google Cloud Apigee) sits above the standard cloud gateways. In addition to routing and rate limiting, it adds a developer portal (for external third parties to discover and subscribe to APIs), API monetisation, lifecycle versioning, and a powerful XML-based policy engine for complex transformations and OAuth flows — all with a rich analytics dashboard. Apigee targets companies running APIs as a product (banks, telcos, large SaaS platforms) where external developer ecosystems need to be managed. It is overkill for internal tools or simple public APIs; use a standard cloud gateway instead unless you are exposing APIs to third-party developers at enterprise scale.
+
 **When to add one:** if FastAPI is ever exposed publicly, receives traffic from multiple clients, or becomes one service in a microservices architecture, add a cloud API gateway in front. For the current single-admin setup it is unnecessary overhead.
 
 ---
