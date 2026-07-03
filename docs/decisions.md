@@ -138,6 +138,27 @@ This is **passwordless authentication** — the email inbox is the credential. N
 | Route protection | `is_tutor()` RPC + `proxy.ts` middleware |
 | Next.js → FastAPI | Shared secret (`X-Internal-Secret` header) |
 
+**JWT — stateless vs stateful:**
+
+JWT itself is stateless (the token is self-contained and verified by signature alone), but refresh token handling introduces a spectrum:
+
+**Stateless JWT** — refresh tokens are never stored; they live only in the cookie. Simple, but you cannot revoke a specific user's session before the token expires naturally (force-logout is not possible).
+
+**Stateful JWT** — a hash of the refresh token is stored in DB. When the user presents it, the server looks it up, confirms it hasn't been revoked, then issues a new access token. This enables force-logout on all devices. Most serious production apps use this approach.
+
+Supabase uses the stateful approach internally — that is why Supabase can invalidate a specific user's session across all devices even though it issues JWTs.
+
+Storage comparison across all three auth styles:
+
+| | Session auth | JWT stateless | JWT stateful |
+|---|---|---|---|
+| Private / public key | No | Yes (env var) | Yes (env var) |
+| Session record in DB | Yes — every request | No | No |
+| Refresh token in DB | N/A | No | Yes (hashed) |
+| DB hit per request | Always | Never | Only on token refresh |
+
+The key win of JWT over session auth is eliminating the DB lookup on every single request — not eliminating storage entirely.
+
 ---
 
 **Service identity: `X-Internal-Secret` instead of service account JWTs**
