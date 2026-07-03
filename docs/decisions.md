@@ -115,6 +115,31 @@ The custom persistence layer (`persistence.py`) also enables features that check
 
 ## Auth
 
+**User-facing auth: magic link (passwordless OTP) via Supabase**
+
+Both admin and student logins use Supabase magic links — no password is ever set or stored. The flow:
+
+1. User enters email on the login page
+2. Frontend calls an RPC (`check_tutor_access` / `check_portal_access`) to verify the email has access before sending anything
+3. If allowed, Supabase emails a one-time link; the user clicks it
+4. `/auth/callback` exchanges the one-time code for a **session cookie** containing a signed JWT
+5. All subsequent requests carry that cookie; Next.js middleware (`proxy.ts`) verifies it via `supabase.auth.getUser()` on every protected route
+
+This is **passwordless authentication** — the email inbox is the credential. No password resets, no password storage, no brute-force risk.
+
+**Why not traditional session auth?** Classic session auth stores a `session_id` in a DB table and looks it up on every request. Supabase's cookie holds a self-contained signed JWT — no DB lookup needed to validate the session itself. The `is_tutor()` RPC is only called to determine the user's *role*, not to validate the session.
+
+**Auth styles summary:**
+
+| Layer | Style |
+|---|---|
+| Admin / student login | Magic link (passwordless OTP) via Supabase |
+| Session maintenance | Cookie holding a signed JWT (managed by Supabase) |
+| Route protection | `is_tutor()` RPC + `proxy.ts` middleware |
+| Next.js → FastAPI | Shared secret (`X-Internal-Secret` header) |
+
+---
+
 **Service identity: `X-Internal-Secret` instead of service account JWTs**
 
 FastAPI is a private internal service — not reachable from the internet. All callers must present an `X-Internal-Secret` header (verified by `require_internal_secret` in `auth.py`, applied at the router level via `dependencies=[Depends(...)]`). This is a simplified form of service identity: only the Next.js server knows the secret, so FastAPI knows any request carrying it came from the trusted frontend.
