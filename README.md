@@ -78,6 +78,20 @@ Tests hit real Supabase — set up `.env` before running.
 
 If you see `invalid_grant` errors, re-visit `/api/google/auth` to re-authorize.
 
+## Hosting tiers
+
+| Tier | Cost | RAM | Cold starts |
+|---|---|---|---|
+| Render Free | $0 | 512 MB | Yes — sleeps after 15 min inactivity |
+| Render Starter | $7/mo | 512 MB | No |
+| Railway Hobby | $5/mo | ~8 GB | No |
+
+**Start on Render Free.** It costs nothing and is sufficient for light usage.
+
+**If LangGraph runs out of memory (OOM) or sleeping gets too annoying → switch to Railway Hobby ($5/mo).** It is $2 cheaper than Render Starter and gives far more RAM headroom — the better upgrade path.
+
+Only move to Render Starter if you specifically want to stay on Render's platform.
+
 ## Keeping the Render instance warm (free tier)
 
 Render's free tier spins down after 15 minutes of inactivity, causing 50+ second cold starts. A cron job on [cron-job.org](https://cron-job.org) (free) pings the health endpoint every 10 minutes to prevent this.
@@ -91,8 +105,6 @@ Render's free tier spins down after 15 minutes of inactivity, causing 50+ second
 3. Enable it
 
 The `/health` endpoint requires no auth so the ping always succeeds.
-
-**When to skip this:** upgrade to Render Starter ($7/month) for a persistent instance that never sleeps.
 
 ---
 
