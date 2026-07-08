@@ -8,6 +8,7 @@ FastAPI backend for the tuition management system. Handles Google Calendar/Drive
 |---|---|
 | `README.md` | Setup, env vars, OAuth, commands, API routes |
 | `docs/decisions.md` | Non-obvious design decisions and the reasoning behind them |
+| `docs/schema.sql` | Full Supabase schema snapshot (tables, RLS, functions, triggers, seed data) — recreate from scratch against a fresh Supabase project |
 | `CLAUDE.md` | AI assistant guidance — architecture, DB schema, service layer |
 | `claude/agent.md` | Tool contract, system rules, SSE contract, LangGraph graph |
 | `claude/timetable.md` | Timetable routes, slot classification algorithm |
