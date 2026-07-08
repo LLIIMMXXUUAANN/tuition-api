@@ -68,6 +68,41 @@ Each subagent has two terminal tools that end its turn without an extra LLM summ
 
 ---
 
+**Tool factory shape: outer factory + inner closures + description at assembly site (`tool_factories.py`)**
+
+Every tool group follows the same two-layer shape:
+
+```python
+def make_student_tools(supabase) -> list[StructuredTool]:
+    async def _search_students(query: str) -> dict:
+        return await search_students(supabase, query)
+    ...
+    return [
+        StructuredTool.from_function(
+            coroutine=_search_students,
+            name="search_students",
+            description="Search for students by name (partial match). Returns id, name, status, class_schedule.",
+            args_schema=SearchStudentsInput,
+        ),
+        ...
+    ]
+```
+
+**Outer factory + inner closures is dependency injection, not a style choice.** Tool functions need a Supabase client to do work, but the LLM must never see `supabase` as a parameter it has to fill in — that's an infrastructure detail, not something an LLM can meaningfully generate. The inner `_search_students` closes over `supabase` from the factory's scope, so `args_schema` only ever exposes business parameters (`query`, `id`, `status`). The alternative — a global client, or fetching a client inside every tool body — is worse for testability and leaks infra into the LLM-facing contract.
+
+**Description at the assembly site, not as a docstring, is a deliberate choice — not the only valid one.** A common LangChain alternative uses `@tool` with the docstring as the description:
+
+```python
+@tool
+def search_students(query: str) -> dict:
+    """Search for students by name (partial match)."""
+    ...
+```
+
+This project doesn't use that pattern because the inner functions are private closures (`_` prefix) — implementation, not the tool's LLM-facing identity. `name`, `description`, and `args_schema` together form that contract, and grouping all three at the `StructuredTool.from_function(...)` call site means all 18+ tool descriptions can be scanned in one block (the `return [...]` list) instead of hunting through scattered docstrings across many closures. This favours **auditability of the tool contract as a whole** over **locality of description to implementation** — both are legitimate production patterns; this one fits better given the number of tools that need to be reviewed together.
+
+---
+
 **UI side-effect events — `ui_action` generic envelope**
 
 Two tools (`generate_slot_availability`, `download_timetable_image`) trigger frontend UI events — a download button appears in the chat after they run. Emitted as a generic SSE envelope:
