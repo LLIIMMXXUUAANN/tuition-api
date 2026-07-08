@@ -331,6 +331,10 @@ Two files using the same row shape → duplicate (4 lines each, feature packages
 
 In `tool_factories.py`, every `StructuredTool.from_function(...)` has `args_schema=` pointing to a Pydantic model. The model becomes the JSON schema sent to the LLM — validation and documentation in one. `Literal["add", "remove"]` becomes `{"enum": ["add", "remove"]}` in JSON schema, so the LLM cannot pass an invalid value.
 
+**Why tools have no output schema.** `args_schema` only ever covers input. The LLM is the one *generating* the arguments — free-form reasoning turned into structured JSON — so a schema is needed to constrain what it's allowed to produce. The output is different: your own Python function produces it, so there is nothing untrusted to constrain. LangChain serializes whatever the tool returns (dict/str) straight into a `ToolMessage`; the LLM just reads it as plain text, no schema required to "receive" it. This matches the OpenAI/Anthropic function-calling spec and LangChain's `StructuredTool` — both define an input schema field only; neither has a return-schema concept.
+
+Where industry *does* still type a tool's return value, it is for **internal type safety**, not for the LLM: wrapping the return in a Pydantic model (or validating through one, as in the `_XxxRow` pattern above) so your own code can't accidentally construct a malformed dict before it gets serialized. That is boundary #3 territory, reused here — not a new boundary the LLM interacts with.
+
 **5. Config / environment variables**
 
 `app/config.py` uses `pydantic-settings BaseSettings`. Missing env vars cause a startup crash with a clear message rather than failing silently on the first API call — fail-fast is always preferable to fail-late.
