@@ -71,6 +71,18 @@ CREATE TABLE public.agent_messages (
   created_at      timestamptz NOT NULL DEFAULT now()
 );
 
+CREATE TABLE public.idempotency_keys (
+  key             text        PRIMARY KEY,
+  endpoint        text        NOT NULL,
+  request_hash    text        NOT NULL,
+  status          text        NOT NULL DEFAULT 'pending' CHECK (status = ANY (ARRAY['pending', 'completed'])),
+  response_status integer,
+  response_body   jsonb,
+  resource_id     uuid REFERENCES public.students(id) ON DELETE SET NULL,
+  created_at      timestamptz NOT NULL DEFAULT now(),
+  expires_at      timestamptz NOT NULL
+);
+
 
 -- ---------------------------------------------------------------------------
 -- Functions
@@ -132,6 +144,119 @@ BEGIN
 END;
 $$;
 
+-- Atomically claims an Idempotency-Key and inserts the student row in one
+-- transaction, so a lost HTTP response after a successful INSERT can never
+-- cause a duplicate row on retry (see docs/decisions.md, "Idempotency-Key").
+-- Leaves the row at status='pending' -- the caller (create_student in
+-- service.py) does Google Calendar/Drive setup afterward (can't live inside
+-- a SQL transaction) and marks the key 'completed' with the full response
+-- in a separate best-effort UPDATE once that finishes.
+CREATE OR REPLACE FUNCTION public.create_student_idempotent(
+  p_key                     text,
+  p_endpoint                text,
+  p_request_hash            text,
+  p_student                 jsonb,
+  p_key_ttl_seconds         int,
+  p_pending_timeout_seconds int
+)
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  v_row          RECORD;
+  v_now          timestamptz := now();
+  v_student_id   uuid;
+  v_student_name text;
+BEGIN
+  -- Atomically claim the key row, or lock the existing one. ON CONFLICT DO
+  -- UPDATE (even a no-op SET) forces a row lock on the pre-existing row, so a
+  -- concurrent second call for the same key blocks here until the first
+  -- transaction commits or rolls back (unlike DO NOTHING, which neither locks
+  -- nor lets us read the existing row). (xmax = 0) on the returned tuple is
+  -- true only when this statement's own INSERT branch produced the row.
+  INSERT INTO idempotency_keys (key, endpoint, request_hash, status, expires_at)
+  VALUES (p_key, p_endpoint, p_request_hash, 'pending', v_now + make_interval(secs => p_key_ttl_seconds))
+  ON CONFLICT (key) DO UPDATE SET key = idempotency_keys.key
+  RETURNING endpoint, request_hash, status, response_status, response_body,
+            resource_id, created_at, expires_at, (xmax = 0) AS was_inserted
+  INTO v_row;
+
+  IF NOT v_row.was_inserted THEN
+    IF v_row.status = 'completed' AND v_row.expires_at > v_now THEN
+      IF v_row.endpoint IS DISTINCT FROM p_endpoint OR v_row.request_hash IS DISTINCT FROM p_request_hash THEN
+        RAISE EXCEPTION 'IDEMPOTENCY_MISMATCH: key % was used for a different request', p_key;
+      END IF;
+      RETURN jsonb_build_object('cached', true, 'status_code', v_row.response_status, 'body', v_row.response_body);
+
+    ELSIF v_row.status = 'completed' THEN
+      -- Expired: key is intentionally recyclable now. Treat as unrelated new request.
+      UPDATE idempotency_keys
+      SET endpoint = p_endpoint, request_hash = p_request_hash, status = 'pending',
+          response_status = NULL, response_body = NULL, resource_id = NULL,
+          created_at = v_now, expires_at = v_now + make_interval(secs => p_key_ttl_seconds)
+      WHERE key = p_key;
+      -- fall through to insert below
+
+    ELSIF v_row.created_at > v_now - make_interval(secs => p_pending_timeout_seconds) THEN
+      -- Genuinely in-flight: normal state right after a successful claim+insert,
+      -- before the caller's separate finalize UPDATE lands. Not an error state.
+      IF v_row.endpoint IS DISTINCT FROM p_endpoint OR v_row.request_hash IS DISTINCT FROM p_request_hash THEN
+        RAISE EXCEPTION 'IDEMPOTENCY_MISMATCH: key % is in progress for a different request', p_key;
+      END IF;
+      RAISE EXCEPTION 'IDEMPOTENCY_CONFLICT: request with key % is already in progress', p_key;
+
+    ELSE
+      -- Stale pending (abandoned/crashed). Because claim + INSERT share one
+      -- transaction, a committed 'pending' row ALWAYS means the student row
+      -- (resource_id) already exists -- only the out-of-transaction Google
+      -- setup + finalize step stalled. Must NOT insert again (would duplicate
+      -- the row this design exists to prevent) -- resume against the same row.
+      IF v_row.resource_id IS NULL THEN
+        RAISE EXCEPTION 'IDEMPOTENCY_INTEGRITY_ERROR: pending key % has no resource_id', p_key;
+      END IF;
+
+      SELECT id, name INTO v_student_id, v_student_name FROM students WHERE id = v_row.resource_id;
+      IF NOT FOUND THEN
+        RAISE EXCEPTION 'IDEMPOTENCY_INTEGRITY_ERROR: student % referenced by key % no longer exists', v_row.resource_id, p_key;
+      END IF;
+
+      UPDATE idempotency_keys
+      SET created_at = v_now, expires_at = v_now + make_interval(secs => p_key_ttl_seconds)
+      WHERE key = p_key;
+
+      RETURN jsonb_build_object('cached', false, 'status_code', 201,
+        'body', jsonb_build_object('id', v_student_id, 'name', v_student_name));
+    END IF;
+  END IF;
+
+  -- Fresh claim, or completed-and-expired reset: insert the student row.
+  INSERT INTO students (
+    name, mode, fee_per_hour, payment_method, status, class_schedule,
+    contact_person, contact_phone, student_phone, today_homework, notes,
+    latest_payment, access_emails
+  )
+  VALUES (
+    p_student->>'name',
+    COALESCE(p_student->>'mode', 'My Python Syllabus'),
+    COALESCE((p_student->>'fee_per_hour')::numeric, 60),
+    COALESCE(p_student->>'payment_method', 'Monthly'),
+    COALESCE(p_student->>'status', 'Active'),
+    COALESCE(p_student->'class_schedule', '[]'::jsonb),
+    p_student->>'contact_person', p_student->>'contact_phone', p_student->>'student_phone',
+    p_student->>'today_homework', p_student->>'notes', p_student->>'latest_payment',
+    ARRAY(SELECT jsonb_array_elements_text(COALESCE(p_student->'access_emails', '[]'::jsonb)))
+  )
+  RETURNING id, name INTO v_student_id, v_student_name;
+
+  UPDATE idempotency_keys SET resource_id = v_student_id WHERE key = p_key;
+
+  RETURN jsonb_build_object('cached', false, 'status_code', 201,
+    'body', jsonb_build_object('id', v_student_id, 'name', v_student_name));
+END;
+$$;
+
 
 -- ---------------------------------------------------------------------------
 -- Triggers
@@ -156,9 +281,14 @@ ALTER TABLE public.templates          ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.settings           ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.agent_conversations ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.agent_messages     ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.idempotency_keys   ENABLE ROW LEVEL SECURITY;
 
 -- tutors: no explicit policy — only accessible via SECURITY DEFINER functions
 -- (is_tutor, check_tutor_access) which bypass RLS using the service role.
+
+-- idempotency_keys: no explicit policy — only touched via the SECURITY
+-- DEFINER create_student_idempotent() function and the backend's own
+-- follow-up "mark completed" UPDATE, both server-side/trusted.
 
 -- students
 CREATE POLICY admin_full_access ON public.students

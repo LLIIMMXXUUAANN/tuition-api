@@ -24,5 +24,8 @@ class Settings(BaseSettings):
     langsmith_api_key: str = ""
     langsmith_project: str = "tuition-agent"
 
+    idempotency_key_ttl_seconds: int = 86400
+    idempotency_pending_timeout_seconds: int = 120
+
 
 settings = Settings()

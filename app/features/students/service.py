@@ -3,9 +3,14 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
+import logging
 
+from postgrest.exceptions import APIError
 from supabase import AsyncClient
 
+from app.config import settings
 from app.features.google.auth import get_oauth2_credentials, save_token_if_rotated
 from app.features.google.calendar import (
     create_weekly_class_events,
@@ -17,18 +22,36 @@ from app.features.google.drive import create_student_drive_folder, update_studen
 from app.features.google.errors import friendly_google_error
 from app.types import ClassSlot
 
+logger = logging.getLogger(__name__)
+
+CREATE_STUDENT_ENDPOINT = "POST /students"
+
 
 class StudentNotFoundError(Exception):
     pass
 
 
-async def create_student(supabase: AsyncClient, data: dict) -> dict:
-    """Insert a student row then auto-setup Google Calendar + Drive.
+class IdempotencyKeyConflictError(Exception):
+    """Another request with the same Idempotency-Key is already in progress."""
 
-    Returns {"id": str, "name": str, "google_warning": str | None}.
-    Raises Exception on DB failure.
+
+class IdempotencyPayloadMismatchError(Exception):
+    """The same Idempotency-Key was reused with a different request body."""
+
+
+def hash_payload(payload: dict) -> str:
+    """Canonical SHA-256 hash of a request body dict.
+
+    `default=str` is a defensive fallback for future callers whose payloads
+    may contain non-JSON-native types (Enums, datetimes) — this endpoint's
+    own payload doesn't need it today.
     """
-    insert_data = {
+    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
+    return hashlib.sha256(canonical.encode()).hexdigest()
+
+
+def build_insert_data(data: dict) -> dict:
+    return {
         "name": data["name"],
         "mode": data["mode"],
         "fee_per_hour": data["fee_per_hour"],
@@ -49,18 +72,54 @@ async def create_student(supabase: AsyncClient, data: dict) -> dict:
         "google_drive_link": data.get("google_drive_link"),
     }
 
-    result = (
-        await supabase.from_("students")
-        .insert(insert_data)
-        .select("id, name")
-        .single()
-        .execute()
-    )
-    if not result.data:
-        raise Exception("Insert returned no data")
 
-    student_id: str = result.data["id"]
-    student_name: str = result.data["name"]
+async def create_student(
+    supabase: AsyncClient, data: dict, *, idempotency_key: str | None = None
+) -> dict:
+    """Insert a student row then auto-setup Google Calendar + Drive.
+
+    Returns {"id": str, "name": str, "google_warning": str | None}.
+    Raises Exception on DB failure.
+    Raises IdempotencyKeyConflictError / IdempotencyPayloadMismatchError if
+    `idempotency_key` is set and the RPC detects a conflicting request.
+    """
+    insert_data = build_insert_data(data)
+
+    if idempotency_key:
+        request_hash = hash_payload(insert_data)
+        try:
+            rpc_result = await supabase.rpc(
+                "create_student_idempotent",
+                {
+                    "p_key": idempotency_key,
+                    "p_endpoint": CREATE_STUDENT_ENDPOINT,
+                    "p_request_hash": request_hash,
+                    "p_student": insert_data,
+                    "p_key_ttl_seconds": settings.idempotency_key_ttl_seconds,
+                    "p_pending_timeout_seconds": settings.idempotency_pending_timeout_seconds,
+                },
+            ).execute()
+        except APIError as exc:
+            message = exc.message or ""
+            if "IDEMPOTENCY_CONFLICT" in message:
+                raise IdempotencyKeyConflictError(idempotency_key) from exc
+            if "IDEMPOTENCY_MISMATCH" in message:
+                raise IdempotencyPayloadMismatchError(idempotency_key) from exc
+            raise
+
+        payload = rpc_result.data
+        if payload["cached"]:
+            return payload["body"]  # {"id", "name", "google_warning"} from a prior completed run
+
+        student_id: str = payload["body"]["id"]
+        student_name: str = payload["body"]["name"]
+    else:
+        result = await supabase.from_("students").insert(insert_data).execute()
+        if not result.data:
+            raise Exception("Insert returned no data")
+        student_id = result.data[0]["id"]
+        student_name = result.data[0]["name"]
+
     class_schedule: list[dict] = insert_data["class_schedule"]
 
     google_warning: str | None = None
@@ -91,12 +150,23 @@ async def create_student(supabase: AsyncClient, data: dict) -> dict:
             "google_drive_link": drive_url,
             "calendar_event_ids": event_ids,
         }
+        await supabase.from_("students").update(google_links).eq("id", student_id).execute()
     except Exception as exc:
         google_warning = friendly_google_error(str(exc))
-        google_links = None
 
-    if google_links:
-        await supabase.from_("students").update(google_links).eq("id", student_id).execute()
+    if idempotency_key:
+        response_body = {"id": student_id, "name": student_name, "google_warning": google_warning}
+        try:
+            await supabase.from_("idempotency_keys").update(
+                {"status": "completed", "response_status": 201, "response_body": response_body}
+            ).eq("key", idempotency_key).execute()
+        except Exception:
+            logger.exception(
+                "Idempotency completion write failed for key=%s — student %s was created "
+                "successfully regardless; a retry before this key's pending window elapses may 409",
+                idempotency_key,
+                student_id,
+            )
 
     return {"id": student_id, "name": student_name, "google_warning": google_warning}
 

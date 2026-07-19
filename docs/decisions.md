@@ -291,9 +291,31 @@ The LLM is not an HTTP client — it does not understand status codes or `{"deta
 |---|---|---|
 | 400 | Bad Request | Client sent invalid data (e.g. `TimetableValidationError`, out-of-range values) |
 | 404 | Not Found | Resource does not exist (`StudentNotFoundError`, empty `.maybe_single()` result) |
+| 409 | Conflict | `IdempotencyKeyConflictError` — a request with the same `Idempotency-Key` is still in progress |
+| 422 | Unprocessable Entity | `IdempotencyPayloadMismatchError` — same `Idempotency-Key` reused with a different request body (also produced separately by `RequestValidationError` for malformed bodies) |
 | 500 | Internal Server Error | Unexpected DB or service failure (`APIError` from Supabase, uncaught `Exception`) |
 
-Every HTTP endpoint wraps its DB/service calls in `try/except`. Domain exceptions map to 400/404; all other exceptions map to 500. No raw tracebacks ever reach the client — FastAPI's default unhandled exception response is a 500 with a full Python traceback, which leaks implementation detail and is never appropriate in production.
+Every HTTP endpoint wraps its DB/service calls in `try/except`. Domain exceptions map to 400/404/409/422; all other exceptions map to 500. No raw tracebacks ever reach the client — FastAPI's default unhandled exception response is a 500 with a full Python traceback, which leaks implementation detail and is never appropriate in production.
+
+---
+
+## Idempotency-Key — `POST /students` (atomic RPC)
+
+**The bug this fixes:** `create_student` (`students/service.py`) inserts a `students` row, then does Google Calendar/Drive setup, then writes `google_meet_link`/`google_drive_link` back onto that row. If that last write throws (a network blip), the router returned HTTP 500 — but the student row (and real Calendar events + Drive folder) already existed. `StudentForm.tsx` has no auto-retry; a user naturally clicks "Add Student" again with the same data, firing a second POST that created a genuine duplicate: a second row, a second Calendar event series, a second Drive folder.
+
+**Why an `Idempotency-Key` header, not just frontend button-disabling:** a `useRef`-based double-submit guard (see `Tuition/claude/ui.md`) closes the *fast double-click* race, but does nothing for a *deliberate* retry seconds later after the user sees an error — which is the actual failure mode above, and far more likely to happen in practice than a millisecond double-click.
+
+**Three tiers, each closing a gap the previous one leaves open:**
+
+- **Tier 1 — plain idempotency (claim the key, then separately INSERT the student row, as two Python-orchestrated calls):** prevents a duplicate row from a double-click or a manual retry-after-error, in the normal case where the failure happens either before anything was created, or after the client fully received the response. This is a legitimate, simpler design — but leaves one gap: if the INSERT commits in Postgres but its HTTP response is lost before Python sees it, Python can't tell "committed but unheard" apart from "never happened," and would release the claim and let a retry create a real duplicate.
+
+- **Tier 2 — atomic RPC (what was built, `create_student_idempotent` in `docs/schema.sql`):** closes exactly that gap. The key-claim and the `students` INSERT happen in **one Postgres transaction**, so the row and its idempotency-claim always exist together or not at all — a retry's own lookup discovers the true committed state directly from the database, so Python never has to guess. This is the same technique documented publicly by former Stripe engineers for idempotency keys in Postgres — not a bespoke invention. Getting the atomicity right required a second design pass: naively "reclaiming" a stale-`pending` key and re-inserting would have caused a **guaranteed** duplicate on every abandoned-then-retried request (since, under this design, a committed `pending` row always means the student row already exists — the out-of-transaction Google setup step is what stalled, not the insert). Fixed with a `resource_id` column: a stale-pending key *resumes* against the already-created row instead of re-inserting.
+
+  **Alternative that also closes this same gap, considered and not used here — client-generated UUID + `PUT`:** instead of a separate `idempotency_keys` table and transaction, the client generates the student's `id` itself and creates via `PUT /students/{id}`; the row's own primary key becomes the dedup mechanism for free, with no new table and no claim/complete lifecycle. Strictly simpler for *this* endpoint, since `students.id` is a plain UUID with no server-owned format. Not used because it doesn't generalize to endpoints where the server must own ID generation/format (e.g. a real payment/charge ID, which typically has a server-assigned prefix/sequence) — the point of building the `Idempotency-Key` pattern now is to have it ready for that future case, where a client-chosen ID isn't an option at all.
+
+- **Tier 3 — Transactional Outbox (not built):** the one thing Tier 2 still can't touch is the Google Calendar/Drive API calls themselves — external HTTP calls can never live inside a SQL transaction, so they still run in Python after the RPC returns, exactly as before, degrading to a `google_warning` on failure rather than raising. Outbox would make that side effect durable and automatically retried by a background worker, instead of best-effort-with-a-visible-warning. Not built because it needs queue/worker infrastructure (Kafka, SQS, or a Postgres-backed job queue) this single-admin, low-traffic app doesn't have and doesn't need.
+
+**Accepted residual risk:** if the whole process crashes between a successful Calendar/Drive creation and the final "mark completed" `UPDATE`, a resumed retry re-runs Calendar/Drive creation and could create a second event series for that one student (not a second student row — that part is fully closed by Tier 2). This requires an actual process crash during a narrow window, not just a network blip, and is not the bug this feature was built to fix. Only Tier 3 would close it.
 
 ---
 

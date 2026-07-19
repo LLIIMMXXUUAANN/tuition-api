@@ -51,6 +51,8 @@ Server starts at `http://127.0.0.1:8000`. API docs at `http://127.0.0.1:8000/doc
 | `LANGSMITH_ENDPOINT` | LangSmith API endpoint |
 | `LANGSMITH_API_KEY` | LangSmith API key |
 | `LANGSMITH_PROJECT` | LangSmith project name (default: `tuition-agent`) |
+| `IDEMPOTENCY_KEY_TTL_SECONDS` | How long a completed Idempotency-Key record is retained before it can be reused (seconds, default `86400`) |
+| `IDEMPOTENCY_PENDING_TIMEOUT_SECONDS` | How long a request holds its "pending" idempotency lock before another request with the same key is allowed to retry (seconds, default `120`) |
 
 See `.env.example` for a template with comments.
 
@@ -137,7 +139,7 @@ To regenerate: Google Account → Security → search "App Passwords".
 | `GET` | `/students` | ✓ | List students (optional `?status=Active`) |
 | `GET` | `/students/portal-lookup` | ✓ | Find student by portal email |
 | `GET` | `/students/{id}` | ✓ | Get single student |
-| `POST` | `/students` | ✓ | Create student |
+| `POST` | `/students` | ✓ | Create student (optional `Idempotency-Key` header for safe retries) |
 | `PUT` | `/students/{id}` | ✓ | Update student (auto Calendar/Drive sync on schedule change) |
 | `DELETE` | `/students/{id}` | ✓ | Delete student + Google cleanup |
 | `POST` | `/payment/generate` | ✓ | Generate payment reminder message |

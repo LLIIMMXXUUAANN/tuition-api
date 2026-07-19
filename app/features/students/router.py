@@ -2,11 +2,19 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 from supabase import AsyncClient
 
 from app.auth import require_internal_secret
+from app.features.students.service import (
+    IdempotencyKeyConflictError,
+    IdempotencyPayloadMismatchError,
+    StudentNotFoundError,
+)
+from app.features.students.service import create_student as svc_create
+from app.features.students.service import delete_student as svc_delete
+from app.features.students.service import update_student as svc_update
 from app.shared.db import get_supabase
 from app.shared.response_models import (
     CreateStudentResponse,
@@ -14,12 +22,6 @@ from app.shared.response_models import (
     StudentResponse,
 )
 from app.types import ClassSlot
-from app.features.students.service import (
-    StudentNotFoundError,
-    create_student as svc_create,
-    update_student as svc_update,
-    delete_student as svc_delete,
-)
 
 router = APIRouter(dependencies=[Depends(require_internal_secret)], tags=["students"])
 
@@ -114,9 +116,20 @@ async def get_student(student_id: str, supabase: AsyncClient = Depends(get_supab
 
 
 @router.post("", status_code=201, response_model=CreateStudentResponse)
-async def create_student(body: StudentPayload, supabase: AsyncClient = Depends(get_supabase)):
+async def create_student(
+    body: StudentPayload, request: Request, supabase: AsyncClient = Depends(get_supabase)
+):
+    idempotency_key = request.headers.get("Idempotency-Key")
     try:
-        result = await svc_create(supabase, body.model_dump())
+        result = await svc_create(supabase, body.model_dump(), idempotency_key=idempotency_key)
+    except IdempotencyKeyConflictError:
+        raise HTTPException(
+            status_code=409, detail="A request with this Idempotency-Key is already in progress"
+        )
+    except IdempotencyPayloadMismatchError:
+        raise HTTPException(
+            status_code=422, detail="This Idempotency-Key was already used with a different request"
+        )
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))
     return {"id": result["id"], "google_warning": result.get("google_warning")}

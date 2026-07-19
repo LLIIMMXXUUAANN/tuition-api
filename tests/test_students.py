@@ -1,6 +1,10 @@
 """Student + template CRUD — create/update/delete cycle against real Supabase."""
 
+import uuid
+
 import pytest
+
+from app.features.students.service import build_insert_data, hash_payload
 
 
 @pytest.fixture
@@ -47,7 +51,7 @@ def test_update_student(client, auth_headers, test_student_id):
         headers=auth_headers,
     )
     assert r.status_code == 200
-    assert r.json() == {"ok": True}
+    assert r.json() == {"ok": True, "google_warning": None}
 
 
 def test_update_student_empty_body(client, auth_headers, test_student_id):
@@ -67,7 +71,7 @@ def test_delete_student(client, auth_headers):
 
     r = client.delete(f"/students/{sid}", headers=auth_headers)
     assert r.status_code == 200
-    assert r.json() == {"ok": True}
+    assert r.json() == {"ok": True, "google_warning": None}
 
 
 def test_update_template_and_restore(client, auth_headers):
@@ -88,3 +92,64 @@ def test_update_template_and_restore(client, auth_headers):
         assert r.json() == {"ok": True}
     finally:
         client.put("/templates/payment", json={"content": original}, headers=auth_headers)
+
+
+def test_create_student_idempotent_replay(client, auth_headers):
+    key = f"pytest-idem-{uuid.uuid4()}"
+    body = {"name": "pytest-idem-student", "mode": "Other Syllabus", "fee_per_hour": 45.0}
+    headers = {**auth_headers, "Idempotency-Key": key}
+    r1 = client.post("/students", json=body, headers=headers)
+    assert r1.status_code == 201, r1.text
+    r2 = client.post("/students", json=body, headers=headers)
+    assert r2.status_code == 201, r2.text
+    assert r1.json()["id"] == r2.json()["id"]
+    client.delete(f"/students/{r1.json()['id']}", headers=auth_headers)
+
+
+def test_create_student_idempotent_payload_mismatch(client, auth_headers):
+    key = f"pytest-idem-{uuid.uuid4()}"
+    headers = {**auth_headers, "Idempotency-Key": key}
+    body1 = {"name": "pytest-idem-a", "mode": "Other Syllabus", "fee_per_hour": 45.0}
+    body2 = {"name": "pytest-idem-b", "mode": "Other Syllabus", "fee_per_hour": 45.0}
+    r1 = client.post("/students", json=body1, headers=headers)
+    assert r1.status_code == 201, r1.text
+    r2 = client.post("/students", json=body2, headers=headers)
+    assert r2.status_code == 422
+    client.delete(f"/students/{r1.json()['id']}", headers=auth_headers)
+
+
+def test_create_student_without_idempotency_key_unaffected(client, auth_headers):
+    r = client.post(
+        "/students",
+        json={"name": "pytest-no-idem-key", "mode": "Other Syllabus", "fee_per_hour": 45.0},
+        headers=auth_headers,
+    )
+    assert r.status_code == 201, r.text
+    client.delete(f"/students/{r.json()['id']}", headers=auth_headers)
+
+
+def test_create_student_idempotency_conflict(client, auth_headers):
+    from datetime import datetime, timedelta, timezone
+
+    from supabase import create_client
+
+    from app.config import settings
+
+    sb = create_client(settings.supabase_url, settings.supabase_service_role_key)
+
+    key = f"pytest-idem-conflict-{uuid.uuid4()}"
+    body = {"name": "pytest-idem-conflict", "mode": "Other Syllabus", "fee_per_hour": 45.0}
+    request_hash = hash_payload(build_insert_data(body))
+    expires_at = (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()
+
+    try:
+        sb.from_("idempotency_keys").insert({
+            "key": key, "endpoint": "POST /students", "request_hash": request_hash,
+            "status": "pending", "expires_at": expires_at,
+        }).execute()
+
+        headers = {**auth_headers, "Idempotency-Key": key}
+        r = client.post("/students", json=body, headers=headers)
+        assert r.status_code == 409
+    finally:
+        sb.from_("idempotency_keys").delete().eq("key", key).execute()

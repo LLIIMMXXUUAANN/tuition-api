@@ -55,7 +55,7 @@ app/
       errors.py        → friendly_google_error, auth_expired (shared error helpers)
     students/
       router.py        → Student CRUD + portal lookup routes
-      service.py       → StudentNotFoundError, create_student, update_student, delete_student
+      service.py       → StudentNotFoundError, IdempotencyKeyConflictError, IdempotencyPayloadMismatchError, hash_payload, build_insert_data, create_student, update_student, delete_student
     payment/
       router.py        → Payment message generation route
       service.py       → build_payment_message wrapper
@@ -122,7 +122,7 @@ All routers require the `X-Internal-Secret` header (checked by `app/auth.py`).
 
 ### Database schema
 
-Six tables in the `public` schema:
+Seven tables in the `public` schema:
 
 - **`agent_conversations`** — one permanent row. Holds `lg_contents` and `prev_lg_contents` (both JSONB) — the LLM-level history used to reconstruct context. `prev_lg_contents` stores the state before the last successful turn, enabling one-level undo for latest-message edit. RLS: `is_tutor()` only.
 - **`agent_messages`** — one row per message. Columns: `conversation_id`, `role` (`user` | `agent`), `content`, `steps` (JSONB array), `is_error` (bool), `students` (JSONB), `schedule_students` (JSONB), `slot_data` (JSONB), `created_at`. RLS: `is_tutor()` only.
@@ -130,6 +130,7 @@ Six tables in the `public` schema:
 - **`templates`** — one row per template, keyed by text `id` (e.g. `payment`, `review_request1`, `first_approach`). `content` is upserted on Save.
 - **`tutors`** — one row per tutor email. Accessed only via SECURITY DEFINER functions.
 - **`settings`** — key/value store. Keys: `google_refresh_token`, `timetable_rules`, `timetable_buffer_mins` (integer stored as string, default `'15'`).
+- **`idempotency_keys`** — one row per in-flight/completed idempotent request, keyed by the client-supplied `Idempotency-Key`. Columns: `endpoint`, `request_hash` (detects the same key reused with a different body), `status` (`pending` | `completed`), `response_status`, `response_body` (JSONB, replayed verbatim on retry), `resource_id` (FK to `students.id`, lets a stale-pending key resume against the row it already created instead of inserting a duplicate). Backing store for the `create_student_idempotent()` RPC used by `POST /students` — see `docs/decisions.md`, "Idempotency-Key — POST /students (atomic RPC)". No RLS policy — only touched by that `SECURITY DEFINER` function and the backend's own follow-up completion `UPDATE`.
 
 SECURITY DEFINER functions (called from the frontend, not the backend):
 - `is_tutor()` — returns true if `auth.email()` is in `tutors`
@@ -145,7 +146,7 @@ SECURITY DEFINER functions (called from the frontend, not the backend):
 Each feature has a `service.py` that owns domain logic and raises typed exceptions:
 
 - **Domain exceptions** (e.g. `StudentNotFoundError`, `TimetableValidationError`) are raised by the service.
-- **HTTP routers** wrap every DB/service call in `try/except`: domain exceptions → `HTTPException` with the appropriate status code (404, 400); general `Exception` (e.g. Supabase `APIError`) → `HTTPException(500, detail=str(exc))`. No raw tracebacks ever reach the client.
+- **HTTP routers** wrap every DB/service call in `try/except`: domain exceptions → `HTTPException` with the appropriate status code (404, 400; `IdempotencyKeyConflictError`/`IdempotencyPayloadMismatchError` in `students/router.py` → 409/422); general `Exception` (e.g. Supabase `APIError`) → `HTTPException(500, detail=str(exc))`. No raw tracebacks ever reach the client.
 - **Agent tools** wrap every DB/service call in `try/except Exception as exc: return {"error": err_msg(exc)}` (non-fatal; the LLM sees the error and can respond accordingly).
 
 The service layer itself never catches — it raises and lets the caller decide the error shape. This keeps HTTP semantics out of the service layer and LLM error formatting out of tool implementations.
